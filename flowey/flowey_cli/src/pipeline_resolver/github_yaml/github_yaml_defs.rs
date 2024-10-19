@@ -72,6 +72,11 @@ pub struct PrTrigger {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct PrType {
+    pub r#type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CiTrigger {
     #[serde(skip_serializing_if = "Vec::is_empty")]

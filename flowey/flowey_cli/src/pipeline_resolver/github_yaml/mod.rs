@@ -53,6 +53,8 @@ pub fn github_yaml(
         gh_schedule_triggers,
         gh_ci_triggers,
         gh_pr_triggers,
+        gh_pr_types,
+        // types: [synchronize, opened, reopened, ready_for_review]
         gh_bootstrap_template,
         parameters,
         ado_name: _,
@@ -634,6 +636,10 @@ EOF
             }
             None => None,
         },
+        types: gh_pr_types
+            .iter()
+            .map(|s| github_yaml_defs::PrType { r#type: s.clone() })
+            .collect(),
         push: match gh_ci_triggers {
             Some(gh_ci_triggers) => Some(github_yaml_defs::CiTrigger {
                 branches: gh_ci_triggers.branches,

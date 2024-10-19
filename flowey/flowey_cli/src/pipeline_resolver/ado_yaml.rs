@@ -63,6 +63,7 @@ pub fn ado_yaml(
         gh_schedule_triggers: _,
         gh_ci_triggers: _,
         gh_pr_triggers: _,
+        gh_pr_types: _,
         gh_bootstrap_template: _,
     } = pipeline;
 

@@ -240,6 +240,31 @@ impl Default for GhPrTriggers {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum GhPrTypes {
+    Assigned,
+    Unassigned,
+    Labeled,
+    Unlabeled,
+    Opened,
+    Edited,
+    Closed,
+    Reopened,
+    Synchronize,
+    ConvertedToDraft,
+    Locked,
+    Unlocked,
+    Enqueued,
+    Dequeued,
+    Milestoned,
+    Demilestoned,
+    ReadyForReview,
+    ReviewRequested,
+    ReviewRequestRemoved,
+    AutoMergeEnabled,
+    AutoMergeDisabled,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GhRunnerOsLabel {
     UbuntuLatest,
@@ -317,6 +342,7 @@ pub struct Pipeline {
     gh_schedule_triggers: Vec<GhScheduleTriggers>,
     gh_ci_triggers: Option<GhCiTriggers>,
     gh_pr_triggers: Option<GhPrTriggers>,
+    gh_pr_types: Vec<GhPrTypes>,
     gh_bootstrap_template: String,
 }
 
@@ -1114,6 +1140,7 @@ pub mod internal {
         pub gh_schedule_triggers: Vec<GhScheduleTriggers>,
         pub gh_ci_triggers: Option<GhCiTriggers>,
         pub gh_pr_triggers: Option<GhPrTriggers>,
+        pub gh_pr_types: Vec<GhPrTypes>,
         pub gh_bootstrap_template: String,
     }
 
@@ -1145,6 +1172,7 @@ pub mod internal {
                 gh_schedule_triggers,
                 gh_ci_triggers,
                 gh_pr_triggers,
+                gh_pr_types,
                 gh_bootstrap_template,
                 // not relevant to consumer code
                 dummy_done_idx: _,
@@ -1176,6 +1204,7 @@ pub mod internal {
                 gh_schedule_triggers,
                 gh_ci_triggers,
                 gh_pr_triggers,
+                gh_pr_types,
                 gh_bootstrap_template,
             }
         }
