@@ -86,7 +86,7 @@ impl FlowNode for Node {
             let tag = format!("rolling-lts/hcl-{kind_string}/{version}");
 
             let file_name = format!(
-                "Microsoft.OHCL.Kernel.{}-{}-{}.zip",
+                "Microsoft.OHCL.Kernel.{}-{}-{}.tar.gz",
                 version,
                 match kind {
                     OpenhclKernelPackageKind::Main | OpenhclKernelPackageKind::Dev => {
@@ -130,10 +130,6 @@ impl FlowNode for Node {
                     if cfg!(unix) {
                         #[cfg(unix)]
                         {
-                            // HACK: recursively chmod all the files, otherwise they all have 000 access.
-                            let sh = xshell::Shell::new()?;
-                            xshell::cmd!(sh, "chmod -R +rwX {extract_dir}").run()?;
-
                             // HACK: recreate the layout used by nuget packages.
                             let nuget_path = "build/native/bin";
                             let metadata_file = "kernel_build_metadata.json";
