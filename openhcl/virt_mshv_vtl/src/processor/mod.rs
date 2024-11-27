@@ -18,8 +18,9 @@ cfg_if::cfg_if! {
         use hvdef::HvX64RegisterName;
         use hvdef::HvX64SegmentRegister;
         use virt::state::StateElement;
-        use virt::x86::MsrError;
         use virt::vp::AccessVpState;
+        use virt::x86::MsrError;
+        use virt_support_x86emu::translate::TranslationRegisters;
     } else if #[cfg(guest_arch = "aarch64")] {
         use hv1_hypercall::Arm64RegisterState;
         use hvdef::HvArm64RegisterName;
@@ -31,7 +32,6 @@ cfg_if::cfg_if! {
 use super::Error;
 use super::UhPartitionInner;
 use super::UhVpInner;
-use crate::BackingShared;
 use crate::GuestVsmState;
 use crate::GuestVtl;
 use crate::WakeReason;
@@ -101,6 +101,8 @@ pub struct UhProcessor<'a, T: Backing> {
     force_exit_sidecar: bool,
     /// The VTLs on this VP that are currently locked, per requesting VTL.
     vtls_tlb_locked: VtlsTlbLocked,
+    #[inspect(skip)]
+    shared: &'a T::Shared,
 
     // Put the runner and backing at the end so that monomorphisms of functions
     // that don't access backing-specific state are more likely to be folded
@@ -149,6 +151,7 @@ impl VtlsTlbLocked {
 pub struct LapicState {
     lapic: LocalApic,
     halted: bool,
+    idle: bool,
     startup_suspend: bool,
     nmi_pending: bool,
 }
@@ -180,13 +183,15 @@ mod private {
         pub(crate) hv: Option<VtlArray<ProcessorVtlHv, 2>>,
         pub(crate) vp_info: &'a TargetVpInfo,
         pub(crate) runner: &'a mut ProcessorRunner<'b, T::HclBacking>,
-        pub(crate) backing_shared: &'a BackingShared,
     }
 
     pub trait BackingPrivate: 'static + Sized + InspectMut + Sized {
         type HclBacking: hcl::ioctl::Backing;
+        type Shared;
 
-        fn new(params: BackingParams<'_, '_, Self>) -> Result<Self, Error>;
+        fn shared(shared: &BackingShared) -> &Self::Shared;
+
+        fn new(params: BackingParams<'_, '_, Self>, shared: &Self::Shared) -> Result<Self, Error>;
 
         type StateAccess<'p, 'a>: AccessVpState<Error = vp_state::Error>
         where
@@ -223,14 +228,10 @@ mod private {
         /// message slot.
         ///
         /// This is used for hypervisor-managed and untrusted SINTs.
-        fn request_untrusted_sint_readiness(this: &mut UhProcessor<'_, Self>, sints: u16);
-
-        /// Copies shared registers (per VSM TLFS spec) from the source VTL to
-        /// the target VTL that will become active.
-        fn switch_vtl_state(
+        fn request_untrusted_sint_readiness(
             this: &mut UhProcessor<'_, Self>,
-            source_vtl: GuestVtl,
-            target_vtl: GuestVtl,
+            vtl: GuestVtl,
+            sints: u16,
         );
 
         /// Returns whether this VP should be put to sleep in usermode, or
@@ -239,6 +240,13 @@ mod private {
             let _ = (this, target_vtl);
             false
         }
+
+        /// Checks interrupt status for all VTLs, and handles cross VTL interrupt preemption and VINA.
+        /// Returns whether interrupt reprocessing is required.
+        fn handle_cross_vtl_interrupts(
+            this: &mut UhProcessor<'_, Self>,
+            dev: &impl CpuIo,
+        ) -> Result<bool, UhRunVpError>;
 
         fn inspect_extra(_this: &mut UhProcessor<'_, Self>, _resp: &mut inspect::Response<'_>) {}
 
@@ -265,7 +273,22 @@ pub trait HardwareIsolatedBacking: Backing {
     /// Gets CVM specific VP state.
     fn cvm_state_mut(&mut self) -> &mut crate::UhCvmVpState;
     /// Gets CVM specific partition state.
-    fn cvm_partition_state(&self) -> &crate::UhCvmPartitionState;
+    fn cvm_partition_state(shared: &Self::Shared) -> &crate::UhCvmPartitionState;
+    /// Copies shared registers (per VSM TLFS spec) from the source VTL to
+    /// the target VTL that will become active.
+    fn switch_vtl_state(
+        this: &mut UhProcessor<'_, Self>,
+        source_vtl: GuestVtl,
+        target_vtl: GuestVtl,
+    );
+    /// Gets registers needed for gva to gpa translation
+    fn translation_registers(
+        &self,
+        this: &UhProcessor<'_, Self>,
+        vtl: GuestVtl,
+    ) -> TranslationRegisters;
+    /// Gets the pat register
+    fn pat(&self, this: &UhProcessor<'_, Self>, vtl: GuestVtl) -> u64;
 }
 
 #[cfg_attr(guest_arch = "aarch64", allow(dead_code))]
@@ -397,10 +420,10 @@ pub enum UhRunVpError {
     InvalidVmcb,
     #[error("unknown exit {0:#x?}")]
     UnknownVmxExit(x86defs::vmx::VmxExit),
-    /// Failed to read hypercall parameters
+    #[error("failed to access VP assist page")]
+    VpAssistPage(#[source] guestmem::GuestMemoryError),
     #[error("failed to read hypercall parameters")]
     HypercallParameters(#[source] guestmem::GuestMemoryError),
-    /// Failed to write hypercall result
     #[error("failed to write hypercall result")]
     HypercallResult(#[source] guestmem::GuestMemoryError),
     #[error("failed to write hypercall control for retry")]
@@ -676,6 +699,12 @@ impl<'p, T: Backing> Processor for UhProcessor<'p, T> {
                 }
                 first_scan_irr = false;
 
+                if T::handle_cross_vtl_interrupts(self, dev)
+                    .map_err(VpHaltReason::InvalidVmState)?
+                {
+                    continue;
+                }
+
                 // Arm the timer.
                 if let Some(timeout) = self.vmtime.get_timeout() {
                     let deadline = self.vmtime.host_time(timeout);
@@ -723,6 +752,7 @@ impl<'p, T: Backing> Processor for UhProcessor<'p, T> {
                 }
             }
         }
+        self.runner.flush_deferred_actions();
         Ok(())
     }
 
@@ -753,7 +783,6 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
         driver: &impl Driver,
         partition: &'a UhPartitionInner,
         vp_info: TargetVpInfo,
-        backing_shared: &'a BackingShared,
         idle_control: Option<&'a mut IdleControl>,
     ) -> Result<Self, Error> {
         let inner = partition.vp(vp_info.base.vp_index).unwrap();
@@ -776,6 +805,7 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
                 let state = LapicState {
                     lapic,
                     halted: false,
+                    idle: false,
                     nmi_pending: false,
                     startup_suspend: first && !vp_info.base.is_bsp(),
                 };
@@ -791,15 +821,19 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
             })
         });
 
-        let backing = T::new(private::BackingParams {
-            partition,
-            #[cfg(guest_arch = "x86_64")]
-            lapics,
-            hv,
-            vp_info: &vp_info,
-            runner: &mut runner,
+        let backing_shared = T::shared(&partition.backing_shared);
+
+        let backing = T::new(
+            private::BackingParams {
+                partition,
+                #[cfg(guest_arch = "x86_64")]
+                lapics,
+                hv,
+                vp_info: &vp_info,
+                runner: &mut runner,
+            },
             backing_shared,
-        })?;
+        )?;
 
         let mut vp = Self {
             partition,
@@ -813,6 +847,7 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
                 .with_crash_message(true),
             _not_send: PhantomData,
             backing,
+            shared: backing_shared,
             vmtime: partition
                 .vmtime
                 .access(format!("vp-{}", vp_info.base.vp_index.index())),
@@ -858,7 +893,7 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
                             #[cfg(guest_arch = "aarch64")]
                             let sint_reg =
                                 HvArm64RegisterName(HvArm64RegisterName::Sint0.0 + sint as u32);
-                            self.runner.get_vp_register(sint_reg).unwrap().as_u64()
+                            self.runner.get_vp_register(vtl, sint_reg).unwrap().as_u64()
                         };
                         masked_sints |= (HvSynicSint::from(sint_msr).masked() as u16) << sint;
                     }
@@ -919,7 +954,7 @@ impl<'a, T: Backing> UhProcessor<'a, T> {
         };
 
         if sints & untrusted_sints != 0 {
-            T::request_untrusted_sint_readiness(self, sints & untrusted_sints);
+            T::request_untrusted_sint_readiness(self, vtl, sints & untrusted_sints);
         }
     }
 
@@ -1206,7 +1241,7 @@ impl<T: CpuIo, B: Backing> Arm64RegisterState for UhHypercallHandler<'_, '_, T, 
     fn pc(&mut self) -> u64 {
         self.vp
             .runner
-            .get_vp_register(HvArm64RegisterName::XPc)
+            .get_vp_register(self.intercepted_vtl, HvArm64RegisterName::XPc)
             .expect("get vp register cannot fail")
             .as_u64()
     }
@@ -1214,14 +1249,17 @@ impl<T: CpuIo, B: Backing> Arm64RegisterState for UhHypercallHandler<'_, '_, T, 
     fn set_pc(&mut self, pc: u64) {
         self.vp
             .runner
-            .set_vp_register(HvArm64RegisterName::XPc, pc.into())
+            .set_vp_register(self.intercepted_vtl, HvArm64RegisterName::XPc, pc.into())
             .expect("set vp register cannot fail");
     }
 
     fn x(&mut self, n: u8) -> u64 {
         self.vp
             .runner
-            .get_vp_register(HvArm64RegisterName(HvArm64RegisterName::X0.0 + n as u32))
+            .get_vp_register(
+                self.intercepted_vtl,
+                HvArm64RegisterName(HvArm64RegisterName::X0.0 + n as u32),
+            )
             .expect("get vp register cannot fail")
             .as_u64()
     }
@@ -1230,6 +1268,7 @@ impl<T: CpuIo, B: Backing> Arm64RegisterState for UhHypercallHandler<'_, '_, T, 
         self.vp
             .runner
             .set_vp_register(
+                self.intercepted_vtl,
                 HvArm64RegisterName(HvArm64RegisterName::X0.0 + n as u32),
                 v.into(),
             )
@@ -1345,6 +1384,10 @@ impl<T: CpuIo, B: Backing> hv1_hypercall::ModifySparseGpaPageHostVisibility
             "modify_gpa_visibility"
         );
 
+        if self.vp.partition.hide_isolation {
+            return Err((HvError::AccessDenied, 0));
+        }
+
         let shared = match visibility {
             HostVisibilityType::PRIVATE => false,
             HostVisibilityType::SHARED => true,
@@ -1370,6 +1413,10 @@ impl<T: CpuIo, B: Backing> hv1_hypercall::QuerySparseGpaPageHostVisibility
         host_visibility: &mut [HostVisibilityType],
     ) -> hvdef::HvRepResult {
         if partition_id != hvdef::HV_PARTITION_ID_SELF {
+            return Err((HvError::AccessDenied, 0));
+        }
+
+        if self.vp.partition.hide_isolation {
             return Err((HvError::AccessDenied, 0));
         }
 

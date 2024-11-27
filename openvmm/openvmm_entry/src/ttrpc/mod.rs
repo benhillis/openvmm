@@ -143,10 +143,8 @@ impl VmService {
         mut recv: mesh::Receiver<WorkerRpc<()>>,
     ) -> anyhow::Result<()> {
         let mut server = mesh_rpc::Server::new();
-        let (vm_service_send, mut vm_service_recv) = mesh::channel();
-        let (inspect_service_send, mut inspect_service_recv) = mesh::channel();
-        server.add_service::<vmservice::Vm>(vm_service_send);
-        server.add_service::<InspectService>(inspect_service_send);
+        let mut vm_service_recv = server.add_service::<vmservice::Vm>();
+        let mut inspect_service_recv = server.add_service::<InspectService>();
 
         let transport = self.transport;
         let (cancel_send, cancel_recv) = mesh::oneshot();
@@ -505,7 +503,8 @@ impl VmService {
             vmbus_devices: vec![],
             #[cfg(windows)]
             vpci_resources: vec![],
-            vmgs_file: None,
+            vmgs_disk: None,
+            format_vmgs: false,
             secure_boot_enabled: false,
             custom_uefi_vars: Default::default(),
             firmware_event_send: None,

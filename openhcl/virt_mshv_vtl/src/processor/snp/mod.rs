@@ -11,19 +11,18 @@ use super::vp_state::UhVpStateAccess;
 use super::BackingPrivate;
 use super::BackingSharedParams;
 use super::HardwareIsolatedBacking;
-use super::LapicState;
 use super::UhEmulationState;
 use super::UhRunVpError;
 use crate::devmsr;
 use crate::processor::UhHypercallHandler;
 use crate::processor::UhProcessor;
+use crate::BackingShared;
 use crate::Error;
 use crate::GuestVtl;
 use crate::UhCvmPartitionState;
 use crate::UhCvmVpState;
 use crate::UhPartitionInner;
 use crate::WakeReason;
-use guestmem::GuestMemory;
 use hcl::vmsa::VmsaWrapper;
 use hv1_emulator::hv::ProcessorVtlHv;
 use hv1_emulator::synic::ProcessorSynic;
@@ -42,7 +41,6 @@ use inspect::Inspect;
 use inspect::InspectMut;
 use inspect_counters::Counter;
 use std::num::NonZeroU64;
-use std::sync::Arc;
 use virt::io::CpuIo;
 use virt::state::StateElement;
 use virt::vp;
@@ -57,7 +55,6 @@ use virt_support_apic::ApicWork;
 use virt_support_x86emu::emulate::emulate_io;
 use virt_support_x86emu::emulate::emulate_translate_gva;
 use virt_support_x86emu::emulate::EmulatorSupport as X86EmulatorSupport;
-use virt_support_x86emu::emulate::TranslateGvaSupport;
 use virt_support_x86emu::translate::TranslationRegisters;
 use vmcore::vmtime::VmTimeAccess;
 use vtl_array::VtlArray;
@@ -78,7 +75,6 @@ use zerocopy::FromZeroes;
 /// A backing for SNP partitions.
 #[derive(InspectMut)]
 pub struct SnpBacked {
-    lapics: VtlArray<LapicState, 2>,
     // TODO CVM GUEST VSM Do we need two sets of any other fields in here?
     /// PFNs used for overlays.
     #[inspect(iter_by_index)]
@@ -91,7 +87,6 @@ pub struct SnpBacked {
     general_stats: VtlArray<GeneralStats, 2>,
     exit_stats: VtlArray<ExitStats, 2>,
     cvm: UhCvmVpState,
-    shared: Arc<SnpBackedShared>,
 }
 
 #[derive(Inspect, Default)]
@@ -152,8 +147,83 @@ impl HardwareIsolatedBacking for SnpBacked {
         &mut self.cvm
     }
 
-    fn cvm_partition_state(&self) -> &UhCvmPartitionState {
-        &self.shared.cvm
+    fn cvm_partition_state(shared: &Self::Shared) -> &UhCvmPartitionState {
+        &shared.cvm
+    }
+
+    fn switch_vtl_state(
+        this: &mut UhProcessor<'_, Self>,
+        source_vtl: GuestVtl,
+        target_vtl: GuestVtl,
+    ) {
+        let [vmsa0, vmsa1] = this.runner.vmsas_mut();
+        let (current_vmsa, mut target_vmsa) = match (source_vtl, target_vtl) {
+            (GuestVtl::Vtl0, GuestVtl::Vtl1) => (vmsa0, vmsa1),
+            (GuestVtl::Vtl1, GuestVtl::Vtl0) => (vmsa1, vmsa0),
+            _ => unreachable!(),
+        };
+
+        target_vmsa.set_rax(current_vmsa.rax());
+        target_vmsa.set_rbx(current_vmsa.rbx());
+        target_vmsa.set_rcx(current_vmsa.rcx());
+        target_vmsa.set_rdx(current_vmsa.rdx());
+        target_vmsa.set_rbp(current_vmsa.rbp());
+        target_vmsa.set_rsi(current_vmsa.rsi());
+        target_vmsa.set_rdi(current_vmsa.rdi());
+        target_vmsa.set_r8(current_vmsa.r8());
+        target_vmsa.set_r9(current_vmsa.r9());
+        target_vmsa.set_r10(current_vmsa.r10());
+        target_vmsa.set_r11(current_vmsa.r11());
+        target_vmsa.set_r12(current_vmsa.r12());
+        target_vmsa.set_r13(current_vmsa.r13());
+        target_vmsa.set_r14(current_vmsa.r14());
+        target_vmsa.set_r15(current_vmsa.r15());
+        target_vmsa.set_xcr0(current_vmsa.xcr0());
+
+        target_vmsa.set_cr2(current_vmsa.cr2());
+
+        // DR6 not shared on AMD
+        target_vmsa.set_dr0(current_vmsa.dr0());
+        target_vmsa.set_dr1(current_vmsa.dr1());
+        target_vmsa.set_dr2(current_vmsa.dr2());
+        target_vmsa.set_dr3(current_vmsa.dr3());
+
+        target_vmsa.set_pl0_ssp(current_vmsa.pl0_ssp());
+        target_vmsa.set_pl1_ssp(current_vmsa.pl1_ssp());
+        target_vmsa.set_pl2_ssp(current_vmsa.pl2_ssp());
+        target_vmsa.set_pl3_ssp(current_vmsa.pl3_ssp());
+        target_vmsa.set_u_cet(current_vmsa.u_cet());
+
+        target_vmsa.set_x87_registers(&current_vmsa.x87_registers());
+
+        let vec_reg_count = 16;
+        for i in 0..vec_reg_count {
+            target_vmsa.set_xmm_registers(i, current_vmsa.xmm_registers(i));
+            target_vmsa.set_ymm_registers(i, current_vmsa.ymm_registers(i));
+        }
+    }
+
+    fn translation_registers(
+        &self,
+        this: &UhProcessor<'_, Self>,
+        vtl: GuestVtl,
+    ) -> TranslationRegisters {
+        let vmsa = this.runner.vmsa(vtl);
+        TranslationRegisters {
+            cr0: vmsa.cr0(),
+            cr4: vmsa.cr4(),
+            efer: vmsa.efer(),
+            cr3: vmsa.cr3(),
+            rflags: vmsa.rflags(),
+            ss: from_seg(hv_seg_from_snp(&vmsa.ss())),
+            encryption_mode: virt_support_x86emu::translate::EncryptionMode::Vtom(
+                this.partition.caps.vtom.unwrap(),
+            ),
+        }
+    }
+
+    fn pat(&self, this: &UhProcessor<'_, Self>, vtl: GuestVtl) -> u64 {
+        this.runner.vmsa(vtl).pat()
     }
 }
 
@@ -191,12 +261,16 @@ impl SnpBackedShared {
 
 impl BackingPrivate for SnpBacked {
     type HclBacking = hcl::ioctl::snp::Snp;
+    type Shared = SnpBackedShared;
 
-    fn new(params: BackingParams<'_, '_, Self>) -> Result<Self, Error> {
-        let crate::BackingShared::Snp(shared) = params.backing_shared else {
+    fn shared(shared: &BackingShared) -> &Self::Shared {
+        let BackingShared::Snp(shared) = shared else {
             unreachable!()
         };
+        shared
+    }
 
+    fn new(params: BackingParams<'_, '_, Self>, _shared: &SnpBackedShared) -> Result<Self, Error> {
         let pfns_handle = params
             .partition
             .shared_vis_pages_pool
@@ -212,14 +286,12 @@ impl BackingPrivate for SnpBacked {
         let overlays: Vec<_> = pfns.collect();
 
         Ok(Self {
-            lapics: params.lapics.unwrap(),
             direct_overlays_pfns: overlays.try_into().unwrap(),
             direct_overlay_pfns_handle: pfns_handle,
             hv_sint_notifications: 0,
             general_stats: VtlArray::from_fn(|_| Default::default()),
             exit_stats: VtlArray::from_fn(|_| Default::default()),
-            cvm: UhCvmVpState::new(params.hv.unwrap()),
-            shared: shared.clone(),
+            cvm: UhCvmVpState::new(params.hv.unwrap(), params.lapics.unwrap()),
         })
     }
 
@@ -327,7 +399,9 @@ impl BackingPrivate for SnpBacked {
         if vtl == GuestVtl::Vtl0 {
             if let Some(irr) = this.runner.proxy_irr() {
                 // TODO SNP: filter proxy IRRs.
-                this.backing.lapics[vtl].lapic.request_fixed_interrupts(irr);
+                this.backing.cvm.lapics[vtl]
+                    .lapic
+                    .request_fixed_interrupts(irr);
             }
         }
 
@@ -340,7 +414,7 @@ impl BackingPrivate for SnpBacked {
             sipi,
             nmi,
             interrupt,
-        } = this.backing.lapics[vtl]
+        } = this.backing.cvm.lapics[vtl]
             .lapic
             .scan(&mut this.vmtime, scan_irr);
 
@@ -378,7 +452,14 @@ impl BackingPrivate for SnpBacked {
         unreachable!("extint managed through software apic")
     }
 
-    fn request_untrusted_sint_readiness(this: &mut UhProcessor<'_, Self>, sints: u16) {
+    fn request_untrusted_sint_readiness(
+        this: &mut UhProcessor<'_, Self>,
+        vtl: GuestVtl,
+        sints: u16,
+    ) {
+        if vtl == GuestVtl::Vtl1 {
+            todo!("TODO: handle untrusted sints for VTL1");
+        }
         if this.backing.hv_sint_notifications & !sints == 0 {
             return;
         }
@@ -388,62 +469,46 @@ impl BackingPrivate for SnpBacked {
         tracing::trace!(?notifications, "setting notifications");
         this.runner
             .set_vp_register(
+                vtl,
                 HvX64RegisterName::DeliverabilityNotifications,
                 u64::from(notifications).into(),
             )
             .expect("requesting deliverability is not a fallable operation");
     }
 
-    fn switch_vtl_state(
+    fn handle_cross_vtl_interrupts(
         this: &mut UhProcessor<'_, Self>,
-        source_vtl: GuestVtl,
-        target_vtl: GuestVtl,
-    ) {
-        let [vmsa0, vmsa1] = this.runner.vmsas_mut();
-        let (current_vmsa, mut target_vmsa) = match (source_vtl, target_vtl) {
-            (GuestVtl::Vtl0, GuestVtl::Vtl1) => (vmsa0, vmsa1),
-            (GuestVtl::Vtl1, GuestVtl::Vtl0) => (vmsa1, vmsa0),
-            _ => unreachable!(),
-        };
+        dev: &impl CpuIo,
+    ) -> Result<bool, UhRunVpError> {
+        this.hcvm_handle_cross_vtl_interrupts(|this, vtl, check_rflags| {
+            let vmsa = this.runner.vmsa_mut(vtl);
+            if vmsa.event_inject().valid()
+                && vmsa.event_inject().interruption_type() == x86defs::snp::SEV_INTR_TYPE_NMI
+            {
+                return true;
+            }
 
-        target_vmsa.set_rax(current_vmsa.rax());
-        target_vmsa.set_rbx(current_vmsa.rbx());
-        target_vmsa.set_rcx(current_vmsa.rcx());
-        target_vmsa.set_rdx(current_vmsa.rdx());
-        target_vmsa.set_rbp(current_vmsa.rbp());
-        target_vmsa.set_rsi(current_vmsa.rsi());
-        target_vmsa.set_rdi(current_vmsa.rdi());
-        target_vmsa.set_r8(current_vmsa.r8());
-        target_vmsa.set_r9(current_vmsa.r9());
-        target_vmsa.set_r10(current_vmsa.r10());
-        target_vmsa.set_r11(current_vmsa.r11());
-        target_vmsa.set_r12(current_vmsa.r12());
-        target_vmsa.set_r13(current_vmsa.r13());
-        target_vmsa.set_r14(current_vmsa.r14());
-        target_vmsa.set_r15(current_vmsa.r15());
-        target_vmsa.set_xcr0(current_vmsa.xcr0());
+            if (check_rflags && !x86defs::RFlags::from_bits(vmsa.rflags()).interrupt_enable())
+                || vmsa.v_intr_cntrl().intr_shadow()
+                || !vmsa.v_intr_cntrl().irq()
+            {
+                return false;
+            }
 
-        target_vmsa.set_cr2(current_vmsa.cr2());
-
-        // DR6 not shared on AMD
-        target_vmsa.set_dr0(current_vmsa.dr0());
-        target_vmsa.set_dr1(current_vmsa.dr1());
-        target_vmsa.set_dr2(current_vmsa.dr2());
-        target_vmsa.set_dr3(current_vmsa.dr3());
-
-        target_vmsa.set_pl0_ssp(current_vmsa.pl0_ssp());
-        target_vmsa.set_pl1_ssp(current_vmsa.pl1_ssp());
-        target_vmsa.set_pl2_ssp(current_vmsa.pl2_ssp());
-        target_vmsa.set_pl3_ssp(current_vmsa.pl3_ssp());
-        target_vmsa.set_u_cet(current_vmsa.u_cet());
-
-        target_vmsa.set_x87_registers(&current_vmsa.x87_registers());
-
-        let vec_reg_count = 16;
-        for i in 0..vec_reg_count {
-            target_vmsa.set_xmm_registers(i, current_vmsa.xmm_registers(i));
-            target_vmsa.set_ymm_registers(i, current_vmsa.ymm_registers(i));
-        }
+            let vmsa_priority = vmsa.v_intr_cntrl().priority() as u32;
+            let lapic = &mut this.backing.cvm.lapics[vtl].lapic;
+            let ppr = lapic
+                .access(&mut SnpApicClient {
+                    partition: this.partition,
+                    vmsa,
+                    dev,
+                    vmtime: &this.vmtime,
+                    vtl,
+                })
+                .get_ppr();
+            let ppr_priority = ppr >> 4;
+            vmsa_priority > ppr_priority
+        })
     }
 
     fn inspect_extra(this: &mut UhProcessor<'_, Self>, resp: &mut inspect::Response<'_>) {
@@ -524,33 +589,6 @@ fn hv_table_from_snp(selector: &SevSelector) -> hvdef::HvX64TableRegister {
         limit: selector.limit as u16,
         base: selector.base,
         ..FromZeroes::new_zeroed()
-    }
-}
-
-impl<T: CpuIo> TranslateGvaSupport for UhEmulationState<'_, '_, T, SnpBacked> {
-    type Error = UhRunVpError;
-
-    fn guest_memory(&self) -> &GuestMemory {
-        &self.vp.partition.gm[self.vtl]
-    }
-
-    fn acquire_tlb_lock(&mut self) {
-        self.vp.set_tlb_lock(Vtl::Vtl2, self.vtl)
-    }
-
-    fn registers(&mut self) -> Result<TranslationRegisters, Self::Error> {
-        let vmsa = self.vp.runner.vmsa(self.vtl);
-        Ok(TranslationRegisters {
-            cr0: vmsa.cr0(),
-            cr4: vmsa.cr4(),
-            efer: vmsa.efer(),
-            cr3: vmsa.cr3(),
-            rflags: vmsa.rflags(),
-            ss: from_seg(hv_seg_from_snp(&vmsa.ss())),
-            encryption_mode: virt_support_x86emu::translate::EncryptionMode::Vtom(
-                self.vp.partition.caps.vtom.unwrap(),
-            ),
-        })
     }
 }
 
@@ -660,6 +698,7 @@ impl<T: CpuIo> UhHypercallHandler<'_, '_, T, SnpBacked> {
             hv1_hypercall::HvFlushVirtualAddressSpaceEx,
             hv1_hypercall::HvSetVpRegisters,
             hv1_hypercall::HvModifyVtlProtectionMask,
+            hv1_hypercall::HvX64TranslateVirtualAddress,
         ],
     );
 
@@ -747,12 +786,14 @@ impl UhProcessor<'_, SnpBacked> {
         vmsa.v_intr_cntrl_mut().set_priority((vector >> 4).into());
         vmsa.v_intr_cntrl_mut().set_ignore_tpr(false);
         vmsa.v_intr_cntrl_mut().set_irq(true);
-        self.backing.lapics[vtl].halted = false;
+        self.backing.cvm.lapics[vtl].halted = false;
+        self.backing.cvm.lapics[vtl].idle = false;
     }
 
     fn handle_nmi(&mut self, vtl: GuestVtl) {
         // TODO SNP: support virtual NMI injection
         // For now, just inject an NMI and hope for the best.
+        // Don't forget to update handle_cross_vtl_interrupts if this code changes.
         let mut vmsa = self.runner.vmsa_mut(vtl);
         vmsa.set_event_inject(
             SevEventInjectInfo::new()
@@ -761,7 +802,8 @@ impl UhProcessor<'_, SnpBacked> {
                 .with_valid(true),
         );
 
-        self.backing.lapics[vtl].halted = false;
+        self.backing.cvm.lapics[vtl].halted = false;
+        self.backing.cvm.lapics[vtl].idle = false;
     }
 
     fn handle_init(&mut self, vtl: GuestVtl) -> Result<(), UhRunVpError> {
@@ -774,7 +816,7 @@ impl UhProcessor<'_, SnpBacked> {
 
     fn handle_sipi(&mut self, vtl: GuestVtl, vector: u8) -> Result<(), UhRunVpError> {
         assert_eq!(vtl, GuestVtl::Vtl0);
-        if self.backing.lapics[vtl].startup_suspend {
+        if self.backing.cvm.lapics[vtl].startup_suspend {
             let mut vmsa = self.runner.vmsa_mut(vtl);
             let address = (vector as u64) << 12;
             vmsa.set_cs(hv_seg_to_snp(&hvdef::HvX64SegmentRegister {
@@ -784,8 +826,9 @@ impl UhProcessor<'_, SnpBacked> {
                 attributes: 0x9b,
             }));
             vmsa.set_rip(0);
-            self.backing.lapics[vtl].startup_suspend = false;
-            self.backing.lapics[vtl].halted = false;
+            self.backing.cvm.lapics[vtl].startup_suspend = false;
+            self.backing.cvm.lapics[vtl].halted = false;
+            self.backing.cvm.lapics[vtl].idle = false;
         }
         Ok(())
     }
@@ -843,7 +886,7 @@ impl UhProcessor<'_, SnpBacked> {
 
                 match x86defs::snp::GhcbUsage(message.ghcb_page.ghcb_usage) {
                     x86defs::snp::GhcbUsage::HYPERCALL => {
-                        let guest_memory = &self.partition.untrusted_dma_memory;
+                        let guest_memory = &self.shared.cvm.shared_memory;
                         // Read GHCB parameters from guest memory before
                         // dispatching.
                         let overlay_base = ghcb_overlay * HV_PAGE_SIZE;
@@ -912,7 +955,7 @@ impl UhProcessor<'_, SnpBacked> {
 
     #[must_use]
     fn sync_lazy_eoi(&mut self, vtl: GuestVtl) -> bool {
-        if self.backing.lapics[vtl].lapic.is_lazy_eoi_pending() {
+        if self.backing.cvm.lapics[vtl].lapic.is_lazy_eoi_pending() {
             return self.backing.cvm.hv[vtl].set_lazy_eoi();
         }
 
@@ -920,8 +963,6 @@ impl UhProcessor<'_, SnpBacked> {
     }
 
     async fn run_vp_snp(&mut self, dev: &impl CpuIo) -> Result<(), VpHaltReason<UhRunVpError>> {
-        // TODO CVM GUEST VSM: actually check if there is an interrupt waiting
-        // for VTL 1 and switch to it if there is
         let next_vtl = self.backing.cvm.exit_vtl;
 
         let mut vmsa = self.runner.vmsa_mut(next_vtl);
@@ -932,8 +973,9 @@ impl UhProcessor<'_, SnpBacked> {
         self.unlock_tlb_lock(Vtl::Vtl2);
         let tlb_halt = self.should_halt_for_tlb_unlock(next_vtl);
 
-        let halt = self.backing.lapics[next_vtl].halted
-            || self.backing.lapics[next_vtl].startup_suspend
+        let halt = self.backing.cvm.lapics[next_vtl].halted
+            || self.backing.cvm.lapics[next_vtl].idle
+            || self.backing.cvm.lapics[next_vtl].startup_suspend
             || tlb_halt;
 
         if halt && next_vtl == GuestVtl::Vtl1 && !tlb_halt {
@@ -946,8 +988,6 @@ impl UhProcessor<'_, SnpBacked> {
 
         // Set the lazy EOI bit just before running.
         let lazy_eoi = self.sync_lazy_eoi(next_vtl);
-
-        // TODO GUEST VSM: update next_vtl based on interrupts
 
         let mut has_intercept = self
             .runner
@@ -991,7 +1031,7 @@ impl UhProcessor<'_, SnpBacked> {
                 .int_ack
                 .increment();
             // The guest has acknowledged the interrupt.
-            self.backing.lapics[entered_from_vtl]
+            self.backing.cvm.lapics[entered_from_vtl]
                 .lapic
                 .acknowledge_interrupt(last_interrupt_ctrl.vector());
         }
@@ -1000,7 +1040,7 @@ impl UhProcessor<'_, SnpBacked> {
 
         // Clear lazy EOI before processing the exit.
         if lazy_eoi && self.backing.cvm.hv[entered_from_vtl].clear_lazy_eoi() {
-            self.backing.lapics[entered_from_vtl]
+            self.backing.cvm.lapics[entered_from_vtl]
                 .lapic
                 .access(&mut SnpApicClient {
                     partition: self.partition,
@@ -1024,7 +1064,7 @@ impl UhProcessor<'_, SnpBacked> {
                     apic_id: self.inner.vp_info.apic_id,
                 };
 
-                let result = self.backing.shared.cvm.cpuid.guest_result(
+                let result = self.shared.cvm.cpuid.guest_result(
                     CpuidFunction(vmsa.rax() as u32),
                     vmsa.rcx() as u32,
                     &guest_state,
@@ -1050,7 +1090,7 @@ impl UhProcessor<'_, SnpBacked> {
 
                 let gp = if is_write {
                     let value = (vmsa.rax() as u32 as u64) | ((vmsa.rdx() as u32 as u64) << 32);
-                    let r = self.backing.lapics[entered_from_vtl]
+                    let r = self.backing.cvm.lapics[entered_from_vtl]
                         .lapic
                         .access(&mut SnpApicClient {
                             partition: self.partition,
@@ -1074,7 +1114,7 @@ impl UhProcessor<'_, SnpBacked> {
                         Err(MsrError::InvalidAccess) => true,
                     }
                 } else {
-                    let r = self.backing.lapics[entered_from_vtl]
+                    let r = self.backing.cvm.lapics[entered_from_vtl]
                         .lapic
                         .access(&mut SnpApicClient {
                             partition: self.partition,
@@ -1085,7 +1125,16 @@ impl UhProcessor<'_, SnpBacked> {
                         })
                         .msr_read(msr)
                         .or_else_if_unknown(|| self.read_msr(msr, entered_from_vtl))
-                        .or_else_if_unknown(|| self.read_msr_cvm(dev, msr, entered_from_vtl));
+                        .or_else_if_unknown(|| self.read_msr_cvm(dev, msr, entered_from_vtl))
+                        .or_else_if_unknown(|| match msr {
+                            hvdef::HV_X64_MSR_GUEST_IDLE => {
+                                self.backing.cvm.lapics[entered_from_vtl].idle = true;
+                                let mut vmsa = self.runner.vmsa_mut(entered_from_vtl);
+                                vmsa.v_intr_cntrl_mut().set_intr_shadow(false);
+                                Ok(0)
+                            }
+                            _ => Err(MsrError::Unknown),
+                        });
 
                     let value = match r {
                         Ok(v) => Some(v),
@@ -1161,9 +1210,9 @@ impl UhProcessor<'_, SnpBacked> {
                 let is_64bit = self.long_mode(entered_from_vtl);
                 let guest_memory = &self.partition.gm[entered_from_vtl];
                 let handler = UhHypercallHandler {
+                    trusted: !self.partition.hide_isolation,
                     vp: &mut *self,
                     bus: dev,
-                    trusted: true,
                     intercepted_vtl: entered_from_vtl,
                 };
 
@@ -1237,7 +1286,7 @@ impl UhProcessor<'_, SnpBacked> {
             SevExitCode::NPF => &mut self.backing.exit_stats[entered_from_vtl].npf_no_intercept,
 
             SevExitCode::HLT => {
-                self.backing.lapics[entered_from_vtl].halted = true;
+                self.backing.cvm.lapics[entered_from_vtl].halted = true;
                 // RIP has already advanced. Clear interrupt shadow.
                 vmsa.v_intr_cntrl_mut().set_intr_shadow(false);
                 &mut self.backing.exit_stats[entered_from_vtl].hlt
@@ -1554,12 +1603,12 @@ impl<T: CpuIo> X86EmulatorSupport for UhEmulationState<'_, '_, T, SnpBacked> {
     }
 
     fn lapic_base_address(&self) -> Option<u64> {
-        self.vp.backing.lapics[self.vtl].lapic.base_address()
+        self.vp.backing.cvm.lapics[self.vtl].lapic.base_address()
     }
 
     fn lapic_read(&mut self, address: u64, data: &mut [u8]) {
         let vtl = self.vtl;
-        self.vp.backing.lapics[vtl]
+        self.vp.backing.cvm.lapics[vtl]
             .lapic
             .access(&mut SnpApicClient {
                 partition: self.vp.partition,
@@ -1573,7 +1622,7 @@ impl<T: CpuIo> X86EmulatorSupport for UhEmulationState<'_, '_, T, SnpBacked> {
 
     fn lapic_write(&mut self, address: u64, data: &[u8]) {
         let vtl = self.vtl;
-        self.vp.backing.lapics[vtl]
+        self.vp.backing.cvm.lapics[vtl]
             .lapic
             .access(&mut SnpApicClient {
                 partition: self.vp.partition,
@@ -1763,11 +1812,13 @@ impl AccessVpState for UhVpStateAccess<'_, '_, SnpBacked> {
     }
 
     fn activity(&mut self) -> Result<vp::Activity, Self::Error> {
-        let lapic = &self.vp.backing.lapics[self.vtl];
+        let lapic = &self.vp.backing.cvm.lapics[self.vtl];
         let mp_state = if lapic.startup_suspend {
             vp::MpState::WaitForSipi
         } else if lapic.halted {
             vp::MpState::Halted
+        } else if lapic.idle {
+            vp::MpState::Idle
         } else {
             vp::MpState::Running
         };
@@ -1790,15 +1841,10 @@ impl AccessVpState for UhVpStateAccess<'_, '_, SnpBacked> {
             pending_event: _,        // TODO SNP
             pending_interruption: _, // TODO SNP
         } = value;
-        let (halted, startup_suspend) = match mp_state {
-            vp::MpState::Running => (false, false),
-            vp::MpState::WaitForSipi => (false, true),
-            vp::MpState::Halted => (true, false),
-            vp::MpState::Idle => (false, false), // TODO SNP: idle support
-        };
-        let lapic = &mut self.vp.backing.lapics[self.vtl];
-        lapic.halted = halted;
-        lapic.startup_suspend = startup_suspend;
+        let lapic = &mut self.vp.backing.cvm.lapics[self.vtl];
+        lapic.halted = mp_state == vp::MpState::Halted;
+        lapic.idle = mp_state == vp::MpState::Idle;
+        lapic.startup_suspend = mp_state == vp::MpState::WaitForSipi;
         lapic.nmi_pending = nmi_pending;
         Ok(())
     }
@@ -1812,11 +1858,11 @@ impl AccessVpState for UhVpStateAccess<'_, '_, SnpBacked> {
     }
 
     fn apic(&mut self) -> Result<vp::Apic, Self::Error> {
-        Ok(self.vp.backing.lapics[self.vtl].lapic.save())
+        Ok(self.vp.backing.cvm.lapics[self.vtl].lapic.save())
     }
 
     fn set_apic(&mut self, value: &vp::Apic) -> Result<(), Self::Error> {
-        self.vp.backing.lapics[self.vtl]
+        self.vp.backing.cvm.lapics[self.vtl]
             .lapic
             .restore(value)
             .map_err(vp_state::Error::InvalidApicBase)?;
@@ -2053,7 +2099,7 @@ impl UhProcessor<'_, SnpBacked> {
             x86defs::X64_MSR_GS_BASE => vmsa.gs().base,
             x86defs::X64_MSR_KERNEL_GS_BASE => vmsa.kernel_gs_base(),
             x86defs::X86X_MSR_TSC_AUX => {
-                if self.backing.shared.tsc_aux_virtualized {
+                if self.shared.tsc_aux_virtualized {
                     vmsa.tsc_aux() as u64
                 } else {
                     return Err(MsrError::InvalidAccess);
@@ -2130,7 +2176,7 @@ impl UhProcessor<'_, SnpBacked> {
             }
             x86defs::X64_MSR_KERNEL_GS_BASE => vmsa.set_kernel_gs_base(value),
             x86defs::X86X_MSR_TSC_AUX => {
-                if self.backing.shared.tsc_aux_virtualized {
+                if self.shared.tsc_aux_virtualized {
                     vmsa.set_tsc_aux(value as u32);
                 } else {
                     return Err(MsrError::InvalidAccess);
@@ -2353,7 +2399,7 @@ impl<T: CpuIo> UhHypercallHandler<'_, '_, T, SnpBacked> {
                 rax.set_virtual_page_number(gpn);
                 ecx.set_additional_count(std::cmp::min(
                     count - 1,
-                    self.vp.backing.shared.invlpgb_count_max.into(),
+                    self.vp.shared.invlpgb_count_max.into(),
                 ));
 
                 let edx = SevInvlpgbEdx::new();

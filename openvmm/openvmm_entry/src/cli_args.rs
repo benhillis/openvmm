@@ -93,6 +93,12 @@ pub struct Options {
     #[clap(long, requires("hv"))]
     pub get: bool,
 
+    /// The disk to use for the GET VMGS.
+    ///
+    /// If this is not provided, then a 4MB RAM disk will be used.
+    #[clap(long)]
+    pub get_vmgs: Option<DiskCliKind>,
+
     /// disable the VTL0 alias map presented to VTL2 by default
     #[clap(long, requires("vtl2"))]
     pub no_alias_map: bool,
@@ -585,7 +591,22 @@ pub enum DiskCliKind {
     // file:<path>
     File(PathBuf),
     // blob:<type>:<url>
-    Blob { kind: BlobKind, url: String },
+    Blob {
+        kind: BlobKind,
+        url: String,
+    },
+    // crypt:<cipher>:<key_file>:<kind>
+    Crypt {
+        cipher: DiskCipher,
+        key_file: PathBuf,
+        disk: Box<DiskCliKind>,
+    },
+}
+
+#[derive(ValueEnum, Clone, Copy)]
+pub enum DiskCipher {
+    #[clap(name = "xts-aes-256")]
+    XtsAes256,
 }
 
 #[derive(Copy, Clone)]
@@ -616,6 +637,18 @@ impl FromStr for DiskCliKind {
                     DiskCliKind::Blob {
                         kind: blob_kind,
                         url: url.to_string(),
+                    }
+                }
+                "crypt" => {
+                    let (cipher, (key, kind)) = arg
+                        .split_once(':')
+                        .and_then(|(cipher, arg)| Some((cipher, arg.split_once(':')?)))
+                        .context("expected cipher:key_file:kind")?;
+                    DiskCliKind::Crypt {
+                        cipher: ValueEnum::from_str(cipher, false)
+                            .map_err(|err| anyhow::anyhow!("invalid cipher: {err}"))?,
+                        key_file: PathBuf::from(key),
+                        disk: Box::new(kind.parse()?),
                     }
                 }
                 kind => {
