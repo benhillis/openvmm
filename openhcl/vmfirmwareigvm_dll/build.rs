@@ -46,10 +46,6 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=UH_DLL_NAME");
     println!("cargo:rerun-if-env-changed=UH_IGVM_PATH");
-    println!("cargo:rerun-if-env-changed=UH_MAJOR");
-    println!("cargo:rerun-if-env-changed=UH_MINOR");
-    println!("cargo:rerun-if-env-changed=UH_PATCH");
-    println!("cargo:rerun-if-env-changed=UH_REVISION");
 
     // If none of our env vars are set, do nothing instead of erroring.
     if std::env::var_os("UH_DLL_NAME").is_none()
@@ -73,29 +69,7 @@ fn main() {
     // (path) absolute path to an IGVM file to package up
     let uh_igvm_path = std::env::var("UH_IGVM_PATH").expect("must set UH_IGVM_PATH");
 
-    // (u16) Major version number of the DLL
-    let uh_major = std::env::var("UH_MAJOR")
-        .expect("must set UH_MAJOR")
-        .parse::<u16>()
-        .expect("UH_MAJOR must be a u16");
-
-    // (u16) Minor version number of the DLL
-    let uh_minor = std::env::var("UH_MINOR")
-        .expect("must set UH_MINOR")
-        .parse::<u16>()
-        .expect("UH_MINOR must be a u16");
-
-    // (u16) Patch version number of the DLL
-    let uh_patch = std::env::var("UH_PATCH")
-        .expect("must set UH_PATCH")
-        .parse::<u16>()
-        .expect("UH_PATCH must be a u16");
-
-    // (u16) Revision version number of the DLL
-    let uh_revision = std::env::var("UH_REVISION")
-        .expect("must set UH_REVISION")
-        .parse::<u16>()
-        .expect("UH_REVISION must be a u16");
+    assert!(std::path::Path::new(&uh_igvm_path).exists());
 
     // workaround for the fact that hvlite's root-level `.cargo/config.toml`
     // currently sets a bunch of extraneous linker flags via
@@ -108,24 +82,47 @@ fn main() {
         panic!("must compile with RUSTFLAGS=\"\"")
     }
 
-    let uh_version = format!("{uh_major},{uh_minor},{uh_patch},{uh_revision}");
-    let uh_version_str = format!(r#""{uh_major}.{uh_minor}.{uh_patch}.{uh_revision}""#);
+    // Handle version information using the shared utility
+    if let Some(version_config) = dll_version::DllVersionConfig::from_env(
+        "UH",
+        "Microsoft VM HCL IGVM Firmware Resources",
+        &uh_dll_name,
+        &uh_dll_name,
+        "Microsoft VM HCL",
+    ) {
+        // Add the IGVM resource to the standard version resources
+        let additional_content = format!("1 VMFW \"{}\"", uh_igvm_path);
 
-    assert!(std::path::Path::new(&uh_igvm_path).exists());
-
-    let macros = [
-        ("UH_DLL_NAME", format!(r#""{uh_dll_name}""#)),
-        ("UH_IGVM_PATH", format!(r#""{uh_igvm_path}""#)),
-        ("UH_VERSION", uh_version),
-        ("UH_VERSION_STR", uh_version_str),
-    ];
-
-    if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
+        version_config
+            .embed_version_info(Some(&additional_content))
+            .expect("Failed to embed version information");
+    } else if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
+        // If no version info but we're building a Windows DLL,
+        // we still need to add the IGVM resource
         println!("cargo:rustc-link-arg=/NOENTRY"); // resource DLL
         println!("cargo:rerun-if-changed=build.rs");
         println!("cargo:rerun-if-changed=resources.rc");
-        embed_resource::compile("resources.rc", macros.map(|(k, v)| format!("{k}={v}")))
+
+        let resources_content = format!("2 24 \"manifest.xml\"\n1 VMFW \"{}\"", uh_igvm_path);
+        let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        let resources_rc_path = out_dir.join("resources.rc");
+        std::fs::write(&resources_rc_path, resources_content)
+            .expect("Failed to write resources.rc");
+
+        // Create a minimal manifest if it doesn't exist
+        let manifest_dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let manifest_path = manifest_dir.join("manifest.xml");
+        if !manifest_path.exists() {
+            let manifest_out_path = out_dir.join("manifest.xml");
+            std::fs::write(
+                &manifest_out_path,
+                dll_version::DllVersionConfig::generate_manifest_content(),
+            )
+            .expect("Failed to write manifest.xml");
+        }
+
+        embed_resource::compile(&resources_rc_path, std::iter::empty::<String>())
             .manifest_required()
-            .unwrap();
+            .expect("Failed to compile resources");
     }
 }

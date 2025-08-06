@@ -1445,6 +1445,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
 
 [[package]]
+name = "dll_version"
+version = "0.0.0"
+dependencies = [
+ "embed-resource",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8768,6 +8775,7 @@ dependencies = [
 name = "vmfirmwareigvm_dll"
 version = "0.0.0"
 dependencies = [
+ "dll_version",
  "embed-resource",
 ]
 

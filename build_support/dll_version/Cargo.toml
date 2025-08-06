@@ -2,19 +2,15 @@
 # Licensed under the MIT License.
 
 [package]
-name = "vmfirmwareigvm_dll"
+name = "dll_version"
 edition.workspace = true
 rust-version.workspace = true
 
-[features]
-ci = []
+[dependencies]
+embed-resource.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
-
-[build-dependencies]
-dll_version.workspace = true
-embed-resource.workspace = true
+name = "dll_version"
 
 [lints]
 workspace = true

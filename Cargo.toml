@@ -10,6 +10,8 @@ members = [
   # repo tooling
   "flowey/flowey_hvlite",
   "xtask",
+  # build support
+  "build_support/dll_version",
   # openhcl
   "openhcl/ohcldiag-dev",
   "openhcl/openhcl_boot",
@@ -58,6 +60,9 @@ edition = "2021"
 
 [workspace.dependencies]
 xtask_fuzz = { path = "xtask/xtask_fuzz" }
+
+# build support
+dll_version = { path = "build_support/dll_version" }
 
 flowey = { path = "flowey/flowey" }
 flowey_cli = { path = "flowey/flowey_cli" }
