@@ -60,9 +60,15 @@ impl SimpleFlowNode for Node {
         let mut pre_build_deps = Vec::new();
 
         if with_crypto {
+            let ssl_pkg = match ctx.platform() {
+                FlowPlatform::Linux(
+                    FlowPlatformLinuxDistro::Fedora | FlowPlatformLinuxDistro::AzureLinux,
+                ) => "openssl-devel",
+                _ => "libssl-dev",
+            };
             pre_build_deps.push(ctx.reqv(|v| {
                 flowey_lib_common::install_dist_pkg::Request::Install {
-                    package_names: vec!["libssl-dev".into()],
+                    package_names: vec![ssl_pkg.into()],
                     done: v,
                 }
             }));
