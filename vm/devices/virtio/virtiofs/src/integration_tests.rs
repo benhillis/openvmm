@@ -533,3 +533,29 @@ async fn init_negotiates_direct_io_allow_mmap(driver: DefaultDriver) {
         "VirtioFs should request FUSE_DIRECT_IO_ALLOW_MMAP_FLAG2 when kernel advertises it"
     );
 }
+
+/// Verify that VirtioFs::with_timeouts creates a filesystem with custom
+/// timeout values, and that the defaults use the expected constants.
+#[test]
+fn custom_timeouts() {
+    use std::time::Duration;
+
+    let tmpdir = tempfile::tempdir().unwrap();
+    std::fs::write(tmpdir.path().join("hello.txt"), b"world").unwrap();
+
+    // Default construction uses DEFAULT_ATTRIBUTE_TIMEOUT=5s and DEFAULT_ENTRY_TIMEOUT=1s.
+    let fs = VirtioFs::new(tmpdir.path(), None).unwrap();
+    assert_eq!(fs.attribute_timeout, Duration::from_secs(5));
+    assert_eq!(fs.entry_timeout, Duration::from_secs(1));
+
+    // Custom timeouts are stored correctly.
+    let fs = VirtioFs::with_timeouts(
+        tmpdir.path(),
+        None,
+        Duration::from_secs(5),
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert_eq!(fs.attribute_timeout, Duration::from_secs(5));
+    assert_eq!(fs.entry_timeout, Duration::from_secs(2));
+}

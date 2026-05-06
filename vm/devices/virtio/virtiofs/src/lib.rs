@@ -31,22 +31,25 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-// TODO: Make these configurable.
-// FUSE likes to spam getattr a lot, so having a small timeout on the attributes avoids excessive
-// calls. It also means that a lookup/stat sequence can use the attributes returned by lookup
-// rather than having to call getattr.
-const ATTRIBUTE_TIMEOUT: Duration = Duration::from_millis(1);
+/// Default attribute timeout. A moderate timeout reduces getattr round-trips
+/// while still re-validating attributes regularly. The guest kernel caches file
+/// attributes for this duration before re-querying the host.
+const DEFAULT_ATTRIBUTE_TIMEOUT: Duration = Duration::from_secs(5);
 
-// Entry timeout must be zero, because on rename existing entries for the child being renamed do
-// not get updated and would stop working. Having a zero timeout forces a new lookup which will
-// update the path.
-const ENTRY_TIMEOUT: Duration = Duration::from_secs(0);
+/// Default entry timeout. The guest kernel caches directory entries (name → inode
+/// mappings) for this duration before re-looking them up from the host. A 1-second
+/// timeout matches virtiofsd's default (`--cache=auto`) and eliminates repeated
+/// lookup round-trips for workloads that stat the same files in quick succession,
+/// while keeping the staleness window short for host-side renames.
+const DEFAULT_ENTRY_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Implementation of the virtio-fs file system.
 pub struct VirtioFs {
     inodes: RwLock<InodeMap>,
     files: RwLock<HandleMap<Arc<VirtioFsFile>>>,
     readonly: bool,
+    attribute_timeout: Duration,
+    entry_timeout: Duration,
 }
 
 impl Fuse for VirtioFs {
@@ -82,7 +85,7 @@ impl Fuse for VirtioFs {
             inode.get_attr()?
         };
 
-        Ok(fuse_attr_out::new(ATTRIBUTE_TIMEOUT, attr))
+        Ok(fuse_attr_out::new(self.attribute_timeout, attr))
     }
 
     fn get_statx(
@@ -104,7 +107,7 @@ impl Fuse for VirtioFs {
             inode.get_statx()?
         };
 
-        Ok(fuse_statx_out::new(ATTRIBUTE_TIMEOUT, flags, statx))
+        Ok(fuse_statx_out::new(self.attribute_timeout, flags, statx))
     }
 
     fn set_attr(&self, request: &Request, arg: &fuse_setattr_in) -> lx::Result<fuse_attr_out> {
@@ -129,7 +132,7 @@ impl Fuse for VirtioFs {
             inode.set_attr(arg, request.uid())?
         };
 
-        Ok(fuse_attr_out::new(ATTRIBUTE_TIMEOUT, attr))
+        Ok(fuse_attr_out::new(self.attribute_timeout, attr))
     }
 
     fn lookup(&self, request: &Request, name: &lx::LxStr) -> lx::Result<fuse_entry_out> {
@@ -177,7 +180,7 @@ impl Fuse for VirtioFs {
         let file = VirtioFsFile::new(file, new_inode);
         let fh = self.insert_file(file);
         Ok(CreateOut {
-            entry: fuse_entry_out::new(node_id, ENTRY_TIMEOUT, ATTRIBUTE_TIMEOUT, attr),
+            entry: fuse_entry_out::new(node_id, self.entry_timeout, self.attribute_timeout, attr),
             open: fuse_open_out::new(fh, FOPEN_DIRECT_IO),
         })
     }
@@ -194,8 +197,8 @@ impl Fuse for VirtioFs {
         let (_, node_id) = self.insert_inode(new_inode);
         Ok(fuse_entry_out::new(
             node_id,
-            ENTRY_TIMEOUT,
-            ATTRIBUTE_TIMEOUT,
+            self.entry_timeout,
+            self.attribute_timeout,
             attr,
         ))
     }
@@ -214,8 +217,8 @@ impl Fuse for VirtioFs {
         let (_, node_id) = self.insert_inode(new_inode);
         Ok(fuse_entry_out::new(
             node_id,
-            ENTRY_TIMEOUT,
-            ATTRIBUTE_TIMEOUT,
+            self.entry_timeout,
+            self.attribute_timeout,
             attr,
         ))
     }
@@ -233,8 +236,8 @@ impl Fuse for VirtioFs {
         let (_, node_id) = self.insert_inode(new_inode);
         Ok(fuse_entry_out::new(
             node_id,
-            ENTRY_TIMEOUT,
-            ATTRIBUTE_TIMEOUT,
+            self.entry_timeout,
+            self.attribute_timeout,
             attr,
         ))
     }
@@ -252,8 +255,8 @@ impl Fuse for VirtioFs {
         // Use the target inode as the reply, with refreshed attributes.
         Ok(fuse_entry_out::new(
             target,
-            ENTRY_TIMEOUT,
-            ATTRIBUTE_TIMEOUT,
+            self.entry_timeout,
+            self.attribute_timeout,
             attr,
         ))
     }
@@ -439,6 +442,21 @@ impl VirtioFs {
         root_path: impl AsRef<Path>,
         mount_options: Option<&LxVolumeOptions>,
     ) -> lx::Result<Self> {
+        Self::with_timeouts(
+            root_path,
+            mount_options,
+            DEFAULT_ATTRIBUTE_TIMEOUT,
+            DEFAULT_ENTRY_TIMEOUT,
+        )
+    }
+
+    /// Creates a new `VirtioFs` with custom attribute and entry cache timeouts.
+    pub fn with_timeouts(
+        root_path: impl AsRef<Path>,
+        mount_options: Option<&LxVolumeOptions>,
+        attribute_timeout: Duration,
+        entry_timeout: Duration,
+    ) -> lx::Result<Self> {
         let readonly = mount_options.is_some_and(|o| o.is_readonly());
         let volume = if let Some(mount_options) = mount_options {
             mount_options.new_volume(root_path)
@@ -452,6 +470,8 @@ impl VirtioFs {
             inodes: RwLock::new(inodes),
             files: RwLock::new(HandleMap::new()),
             readonly,
+            attribute_timeout,
+            entry_timeout,
         })
     }
 
@@ -461,8 +481,8 @@ impl VirtioFs {
         let (_, new_inode_nr) = self.insert_inode(new_inode);
         Ok(fuse_entry_out::new(
             new_inode_nr,
-            ENTRY_TIMEOUT,
-            ATTRIBUTE_TIMEOUT,
+            self.entry_timeout,
+            self.attribute_timeout,
             attr,
         ))
     }
