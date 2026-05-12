@@ -39,6 +39,17 @@ const DEFAULT_MAX_PAGES: u32 = 256;
 // a difference.
 const PAGE_SIZE: u32 = 4096;
 
+/// Options for configuring a FUSE session.
+#[derive(Debug, Default)]
+pub struct SessionOptions {
+    /// Override the maximum write size (in bytes) negotiated during
+    /// `FUSE_INIT`. When set, `FUSE_MAX_PAGES` will only be negotiated if
+    /// this value exceeds the default 32-page (128 KiB) request size.
+    ///
+    /// When `None`, the session uses `DEFAULT_MAX_PAGES * PAGE_SIZE`.
+    pub max_write: Option<u32>,
+}
+
 /// A FUSE session for a file system.
 ///
 /// Handles negotiation and dispatching requests to the file system.
@@ -48,6 +59,7 @@ pub struct Session {
     // a lock, since operations mostly don't need to access the SessionInfo.
     initialized: atomic::AtomicBool,
     info: RwLock<SessionInfo>,
+    options: SessionOptions,
 }
 
 impl Session {
@@ -56,10 +68,19 @@ impl Session {
     where
         T: 'static + Fuse + Send + Sync,
     {
+        Self::with_options(fs, SessionOptions::default())
+    }
+
+    /// Create a new `Session` with the specified options.
+    pub fn with_options<T>(fs: T, options: SessionOptions) -> Self
+    where
+        T: 'static + Fuse + Send + Sync,
+    {
         Self {
             fs: Box::new(fs),
             initialized: atomic::AtomicBool::new(false),
             info: RwLock::new(SessionInfo::default()),
+            options,
         }
     }
 
@@ -493,7 +514,21 @@ impl Session {
             info.want2 = DEFAULT_FLAGS2 & init.flags2;
         }
         info.time_gran = 1;
-        info.max_write = DEFAULT_MAX_PAGES * PAGE_SIZE;
+        info.max_write = self
+            .options
+            .max_write
+            .unwrap_or(DEFAULT_MAX_PAGES * PAGE_SIZE);
+
+        // Only negotiate FUSE_MAX_PAGES when the configured max_write
+        // actually exceeds the kernel's default of 32 pages (128 KiB).
+        // Advertising the flag without backing it with a larger max_write
+        // is harmless but pointless, and hosts with constrained memory
+        // mapping (e.g. HDV apertures) explicitly lower max_write.
+        const FUSE_DEFAULT_MAX_PAGES_SIZE: u32 = 32 * PAGE_SIZE;
+        if info.max_write <= FUSE_DEFAULT_MAX_PAGES_SIZE {
+            info.want &= !FUSE_MAX_PAGES;
+        }
+
         self.fs.init(&mut info);
 
         assert!(info.want & !info.capable == 0);

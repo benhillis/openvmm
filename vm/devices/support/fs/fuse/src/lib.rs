@@ -23,6 +23,7 @@ pub use request::Request;
 pub use request::RequestReader;
 pub use session::Session;
 pub use session::SessionInfo;
+pub use session::SessionOptions;
 
 use lx::LxStr;
 use lx::LxString;

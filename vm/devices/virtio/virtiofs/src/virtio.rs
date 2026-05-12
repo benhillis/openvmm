@@ -68,6 +68,29 @@ impl VirtioFsDevice {
     where
         Fs: 'static + fuse::Fuse + Send + Sync,
     {
+        Self::with_options(
+            driver_source,
+            tag,
+            fs,
+            shmem_size,
+            notify_corruption,
+            fuse::SessionOptions::default(),
+        )
+    }
+
+    /// Creates a new `VirtioFsDevice` with the specified mount tag and
+    /// session options.
+    pub fn with_options<Fs>(
+        driver_source: &VmTaskDriverSource,
+        tag: &str,
+        fs: Fs,
+        shmem_size: u64,
+        notify_corruption: Option<Arc<dyn Fn() + Sync + Send>>,
+        session_options: fuse::SessionOptions,
+    ) -> Self
+    where
+        Fs: 'static + fuse::Fuse + Send + Sync,
+    {
         let mut config = VirtioFsDeviceConfig {
             tag: [0; 36],
             num_request_queues: 1,
@@ -87,7 +110,7 @@ impl VirtioFsDevice {
             task_name: format!("virtiofs-{}", tag).into(),
             driver: driver_source.simple(),
             config,
-            fs: Arc::new(fuse::Session::new(fs)),
+            fs: Arc::new(fuse::Session::with_options(fs, session_options)),
             workers: Vec::new(),
             shmem_size,
             shared_memory_region: None,
