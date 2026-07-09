@@ -1,5 +1,11 @@
 # Release Management
 
+> **See also:** [Release Model and Support](./release_model.md) for how the
+> `release/*` branches described here relate to OpenVMM releases. This page
+> documents the mechanics of the shared `release/<MAJOR>.<MINOR>.<YYMM>`
+> servicing branches (driven by OpenHCL); that page explains the overall
+> two-product release and support model.
+
 Occasionally, the OpenVMM project will declare upcoming release milestones. We
 stabilize the code base in a `release/<MAJOR>.<MINOR>.<YYMM>` branch, typically
 named for the YYMM when the branch was forked. Future references to the release

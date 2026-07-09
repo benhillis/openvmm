@@ -61,6 +61,7 @@
   - [Coding Conventions](./dev_guide/contrib/code.md)
   - [Save State](./dev_guide/contrib/save-state.md)
   - [Snapshot Format](./dev_guide/snapshot_format.md)
+  - [Release Model and Support](./dev_guide/contrib/release_model.md)
   - [Releases & Code Flow](./dev_guide/contrib/release.md)
   - [Submitting Changes](./dev_guide/contrib/pr.md)
   - [Code Review Process](./dev_guide/contrib/code_review.md)
