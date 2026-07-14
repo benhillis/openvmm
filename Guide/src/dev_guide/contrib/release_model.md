@@ -136,8 +136,9 @@ project: time-based major releases on a regular cadence (Cloud Hypervisor cuts a
 major roughly every six weeks), a defined support window with a small number of
 releases in service at once (Cloud Hypervisor supports each major for about
 twelve weeks, so roughly two trains overlap), and point releases carrying bug
-and security fixes. No long-term support (LTS) line is planned; long-term
-support, if ever needed, would be left to downstream distributors.
+and security fixes. Cloud Hypervisor has no long-term support (LTS) line; in
+practice few consumers ask for one, and those that need it maintain their own.
+We do not plan an LTS line either.
 
 Adopting that model means standing up a supported OpenVMM release line, with the
 associated branches and backporting. We take that step only when one of these is
@@ -149,10 +150,24 @@ true:
 - An external consumer formally needs a supported OpenVMM release with fixes
   serviced on an older version.
 
-Until one of those holds, we deliberately keep the rolling model and do not
-create OpenVMM release branches. Note that any such future OpenVMM line would be
-a distinct concern from the OpenHCL `release/*.YYMM` servicing branches, which
-continue to be driven by OpenHCL's own lifecycle regardless.
+### Proposed branch structure
+
+When we are ready to stand up that line, the proposal is to unify both products
+on a single `YYMM` branch scheme:
+
+- **Cut `YYMM` branches that ship OpenVMM** on a regular cadence, for example
+  monthly (`2607`, `2608`, `2609`, ...).
+- **OpenHCL snaps to a chosen subset of those branches** on its own schedule
+  (for example semi-annually), rather than forking its own separate line. The
+  branch OpenHCL picks becomes its `release/<MAJOR>.<MINOR>.<YYMM>` servicing
+  branch.
+- This unifies the branch structure across both products and lets OpenVMM's
+  "major" simply be a monthly branch, avoiding a separate versioning scheme.
+- Longer term, these same `YYMM` branches are the natural place for any LTS
+  designation, should we ever decide to offer one.
+
+Until we adopt this, we deliberately keep the rolling model and do not create
+OpenVMM release branches.
 
 ## Taking a dependency on a release
 
