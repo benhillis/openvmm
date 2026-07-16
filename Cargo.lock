@@ -10514,6 +10514,7 @@ dependencies = [
  "nvme_resources",
  "nvme_spec",
  "nvme_test",
+ "openvmm_build_info",
  "openvmm_defs",
  "openvmm_helpers",
  "openvmm_ttrpc_vmservice",
