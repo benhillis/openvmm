@@ -97,6 +97,7 @@ impl IntoPipeline for CheckinGatesCli {
                     pipeline
                         .gh_set_ci_triggers(GhCiTriggers {
                             branches,
+                            tags: vec!["openvmm-v*".into()],
                             paths_ignore: ci_paths_ignore.clone(),
                             ..Default::default()
                         })
@@ -286,7 +287,7 @@ impl IntoPipeline for CheckinGatesCli {
                 qc.clone()
             } else {
                 // CI mode: keep standalone linux fmt job
-                let job = pipeline
+                let mut job = pipeline
                     .new_job(
                         FlowPlatform::Linux(FlowPlatformLinuxDistro::Ubuntu),
                         FlowArch::X86_64,
@@ -297,8 +298,13 @@ impl IntoPipeline for CheckinGatesCli {
                     .side_effect(|done| flowey_lib_hvlite::_jobs::check_xtask_fmt::Request {
                         target: CommonTriple::X86_64_LINUX_GNU,
                         done,
-                    })
-                    .finish();
+                    });
+                if matches!(backend_hint, PipelineBackendHint::Github) {
+                    job = job.side_effect(|done| {
+                        flowey_lib_hvlite::_jobs::validate_openvmm_release_tag::Request { done }
+                    });
+                }
+                let job = job.finish();
                 all_jobs.push(job.clone());
                 job
             };
@@ -1824,6 +1830,7 @@ impl IntoPipeline for CheckinGatesCli {
                     FlowArch::X86_64,
                     "publish vmgstool",
                 )
+                .gh_dangerous_override_if("github.ref_type != 'tag'")
                 .gh_grant_permissions::<flowey_lib_common::publish_gh_release::Node>([(
                     GhPermission::Contents,
                     GhPermissionValue::Write,
