@@ -546,7 +546,7 @@ async fn snapshot_save_to_disk(
     let manifest = openvmm_helpers::snapshot::SnapshotManifest {
         version: openvmm_helpers::snapshot::MANIFEST_VERSION,
         created_at: std::time::SystemTime::now().into(),
-        openvmm_version: openvmm_build_info::get().product_version().to_string(),
+        openvmm_version: openvmm_build_info::get().version().to_string(),
         memory_size_bytes: mem_size,
         vp_count: 2,
         page_size: 4096,

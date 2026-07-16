@@ -672,6 +672,7 @@ impl IntoPipeline for CheckinGatesCli {
                             // FIXME: this relies on openvmm default features
                             features: [].into(),
                         },
+                        build_metadata: None,
                         openvmm,
                     }
                 })
@@ -849,6 +850,7 @@ impl IntoPipeline for CheckinGatesCli {
                             features: [flowey_lib_hvlite::build_openvmm::OpenvmmFeature::Tpm]
                                 .into(),
                         },
+                        build_metadata: None,
                         openvmm,
                     }
                 })
@@ -926,6 +928,7 @@ impl IntoPipeline for CheckinGatesCli {
                             features: [flowey_lib_hvlite::build_openvmm::OpenvmmFeature::Tpm]
                                 .into(),
                         },
+                        build_metadata: None,
                         openvmm,
                     }
                 })

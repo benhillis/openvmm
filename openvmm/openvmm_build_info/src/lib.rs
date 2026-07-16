@@ -8,6 +8,7 @@
 #[derive(Debug)]
 pub struct BuildInfo {
     product_version: &'static str,
+    version: &'static str,
     revision: &'static str,
     branch: &'static str,
 }
@@ -16,6 +17,7 @@ impl BuildInfo {
     pub const fn new() -> Self {
         Self {
             product_version: env!("OPENVMM_PRODUCT_VERSION"),
+            version: env!("OPENVMM_VERSION"),
             revision: if let Some(revision) = option_env!("BUILD_GIT_SHA") {
                 revision
             } else {
@@ -31,6 +33,10 @@ impl BuildInfo {
 
     pub const fn product_version(&self) -> &'static str {
         self.product_version
+    }
+
+    pub const fn version(&self) -> &'static str {
+        self.version
     }
 
     pub const fn scm_revision(&self) -> &'static str {

@@ -20,7 +20,7 @@ fn main() {
         && args.next().is_none();
 
     if version_requested {
-        println!("openvmm {}", openvmm_build_info::get().product_version());
+        println!("openvmm {}", openvmm_build_info::get().version());
         return;
     }
 
