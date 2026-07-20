@@ -7,6 +7,12 @@ const BUILD_CHANNEL: &str = "OPENVMM_BUILD_CHANNEL";
 const BUILD_DATE: &str = "OPENVMM_BUILD_DATE";
 const BUILD_NUMBER: &str = "OPENVMM_BUILD_NUMBER";
 
+enum BuildChannel {
+    Dev,
+    Release,
+    Nightly(NightlyMetadata),
+}
+
 struct NightlyMetadata {
     date: String,
     build_number: u64,
@@ -66,13 +72,14 @@ fn validate_date(date: &str) {
     }
 }
 
-fn nightly_metadata() -> Option<NightlyMetadata> {
+fn build_channel() -> BuildChannel {
     let channel = optional_env(BUILD_CHANNEL);
     let date = optional_env(BUILD_DATE);
     let build_number = optional_env(BUILD_NUMBER);
 
     match (channel.as_deref(), date, build_number) {
-        (None, None, None) => None,
+        (None | Some("dev"), None, None) => BuildChannel::Dev,
+        (Some("release"), None, None) => BuildChannel::Release,
         (Some("nightly"), Some(date), Some(build_number)) => {
             validate_date(&date);
             let parsed_build_number = build_number.parse::<u64>().unwrap_or_else(|_| {
@@ -84,16 +91,25 @@ fn nightly_metadata() -> Option<NightlyMetadata> {
                 );
             }
 
-            Some(NightlyMetadata {
+            BuildChannel::Nightly(NightlyMetadata {
                 date,
                 build_number: parsed_build_number,
             })
         }
-        (Some(channel), _, _) if channel != "nightly" => {
+        (Some(channel), _, _) if !matches!(channel, "dev" | "release" | "nightly") => {
             panic!("{BUILD_CHANNEL} has unsupported value {channel:?}")
         }
-        _ => panic!("{BUILD_CHANNEL}, {BUILD_DATE}, and {BUILD_NUMBER} must be set together"),
+        _ => panic!("{BUILD_DATE} and {BUILD_NUMBER} are only valid for nightly builds"),
     }
+}
+
+fn short_revision(git_info: Option<&build_rs_git_info::GitInfo>) -> Option<&str> {
+    let revision = git_info?.sha();
+    Some(
+        revision
+            .get(..9)
+            .unwrap_or_else(|| panic!("OpenVMM Git revision is too short: {revision:?}")),
+    )
 }
 
 fn main() {
@@ -104,7 +120,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed={BUILD_NUMBER}");
 
     let product_version = product_version();
-    let nightly_metadata = nightly_metadata();
+    let build_channel = build_channel();
     let git_info = match build_rs_git_info::collect_git_info() {
         Ok(git_info) => {
             git_info.emit();
@@ -116,19 +132,26 @@ fn main() {
         }
     };
 
-    let version = if let Some(NightlyMetadata { date, build_number }) = nightly_metadata {
-        let revision = git_info
-            .as_ref()
-            .unwrap_or_else(|| panic!("OpenVMM nightly builds require Git source information"))
-            .sha();
-        let short_revision = revision
-            .get(..9)
-            .unwrap_or_else(|| panic!("OpenVMM Git revision is too short: {revision:?}"));
-        format!("{product_version}-nightly.{date}.{build_number}.g{short_revision}")
-    } else {
-        product_version.clone()
+    let (channel, version) = match build_channel {
+        BuildChannel::Dev => {
+            let version = match short_revision(git_info.as_ref()) {
+                Some(revision) => format!("{product_version}-dev+g{revision}"),
+                None => format!("{product_version}-dev"),
+            };
+            ("dev", version)
+        }
+        BuildChannel::Release => ("release", product_version.clone()),
+        BuildChannel::Nightly(NightlyMetadata { date, build_number }) => {
+            let revision = short_revision(git_info.as_ref())
+                .unwrap_or_else(|| panic!("OpenVMM nightly builds require Git source information"));
+            (
+                "nightly",
+                format!("{product_version}-nightly.{date}.{build_number}.g{revision}"),
+            )
+        }
     };
 
     println!("cargo:rustc-env=OPENVMM_PRODUCT_VERSION={product_version}");
+    println!("cargo:rustc-env=OPENVMM_BUILD_CHANNEL={channel}");
     println!("cargo:rustc-env=OPENVMM_VERSION={version}");
 }

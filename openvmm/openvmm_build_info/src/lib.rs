@@ -9,6 +9,7 @@
 pub struct BuildInfo {
     product_version: &'static str,
     version: &'static str,
+    channel: &'static str,
     revision: &'static str,
     branch: &'static str,
 }
@@ -18,6 +19,7 @@ impl BuildInfo {
         Self {
             product_version: env!("OPENVMM_PRODUCT_VERSION"),
             version: env!("OPENVMM_VERSION"),
+            channel: env!("OPENVMM_BUILD_CHANNEL"),
             revision: if let Some(revision) = option_env!("BUILD_GIT_SHA") {
                 revision
             } else {
@@ -37,6 +39,10 @@ impl BuildInfo {
 
     pub const fn version(&self) -> &'static str {
         self.version
+    }
+
+    pub const fn channel(&self) -> &'static str {
+        self.channel
     }
 
     pub const fn scm_revision(&self) -> &'static str {
