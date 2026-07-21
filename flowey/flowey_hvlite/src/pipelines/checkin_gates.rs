@@ -301,7 +301,10 @@ impl IntoPipeline for CheckinGatesCli {
                     });
                 if matches!(backend_hint, PipelineBackendHint::Github) {
                     job = job.side_effect(|done| {
-                        flowey_lib_hvlite::_jobs::validate_openvmm_release_tag::Request { done }
+                        flowey_lib_hvlite::_jobs::validate_openvmm_release_tag::Request {
+                            require_tag: false,
+                            done,
+                        }
                     });
                 }
                 let job = job.finish();
