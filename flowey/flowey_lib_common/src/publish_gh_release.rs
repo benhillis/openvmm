@@ -148,8 +148,6 @@ impl FlowNode for Node {
                             }
                         })
                         .collect::<Vec<_>>();
-                    let draft = draft.then_some("--draft");
-
                     let existing_release = std::process::Command::new(&gh_cli)
                         .args([
                             "release",
@@ -182,6 +180,13 @@ impl FlowNode for Node {
                             "{gh_cli} release upload {tag} {files...} --repo {repo} --clobber"
                         )
                         .run()?;
+                        if is_draft.trim() == "true" && !draft {
+                            flowey::shell_cmd!(
+                                rt,
+                                "{gh_cli} release edit {tag} --repo {repo} --draft=false"
+                            )
+                            .run()?;
+                        }
                         continue;
                     }
 
@@ -189,6 +194,7 @@ impl FlowNode for Node {
                         GhReleaseNotes::Generated => vec!["--generate-notes".to_owned()],
                         GhReleaseNotes::Text(notes) => vec!["--notes".to_owned(), notes],
                     };
+                    let draft = draft.then_some("--draft");
                     let prerelease = prerelease.then_some("--prerelease");
                     flowey::shell_cmd!(rt, "{gh_cli} release create {tag} {files...} --repo {repo} --target {target} --title {title} {notes...} {draft...} {prerelease...}").run()?;
                 }
