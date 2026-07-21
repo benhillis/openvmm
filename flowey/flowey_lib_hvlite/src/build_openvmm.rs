@@ -7,7 +7,6 @@ use crate::common::CommonProfile;
 use crate::common::CommonTriple;
 use flowey::node::prelude::*;
 use flowey_lib_common::run_cargo_build::CargoFeatureSet;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -21,11 +20,6 @@ pub struct OpenvmmBuildParams {
     pub profile: CommonProfile,
     pub target: CommonTriple,
     pub features: BTreeSet<OpenvmmFeature>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum OpenvmmBuildMetadata {
-    Nightly { date: String, build_number: u64 },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,7 +45,6 @@ impl Artifact for OpenvmmOutput {}
 flowey_request! {
     pub struct Request {
         pub params: OpenvmmBuildParams,
-        pub build_metadata: Option<ReadVar<OpenvmmBuildMetadata>>,
         pub openvmm: WriteVar<OpenvmmOutput>,
     }
 }
@@ -89,19 +82,9 @@ impl FlowNode for Node {
                     target,
                     features,
                 },
-            build_metadata,
             openvmm: openvmm_bin,
         } in requests
         {
-            let extra_env = build_metadata.map(|metadata| {
-                metadata.map(ctx, |metadata| match metadata {
-                    OpenvmmBuildMetadata::Nightly { date, build_number } => BTreeMap::from([
-                        ("OPENVMM_BUILD_CHANNEL".into(), "nightly".into()),
-                        ("OPENVMM_BUILD_DATE".into(), date),
-                        ("OPENVMM_BUILD_NUMBER".into(), build_number.to_string()),
-                    ]),
-                })
-            });
             let output = ctx.reqv(|v| crate::run_cargo_build::Request {
                 crate_name: "openvmm".into(),
                 out_name: "openvmm".into(),
@@ -121,7 +104,7 @@ impl FlowNode for Node {
                 ),
                 target: target.as_triple(),
                 no_split_dbg_info: false,
-                extra_env,
+                extra_env: None,
                 pre_build_deps: pre_build_deps.clone(),
                 output: v,
             });

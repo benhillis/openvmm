@@ -3,155 +3,158 @@
 
 #![expect(missing_docs)]
 
-const BUILD_CHANNEL: &str = "OPENVMM_BUILD_CHANNEL";
-const BUILD_DATE: &str = "OPENVMM_BUILD_DATE";
-const BUILD_NUMBER: &str = "OPENVMM_BUILD_NUMBER";
+use serde::Deserialize;
 
-enum BuildChannel {
-    Dev,
-    Release,
-    Nightly(NightlyMetadata),
+mod version;
+
+const RELEASE_METADATA_SCHEMA: u32 = 1;
+const SOURCE_METADATA_SCHEMA: u32 = 1;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SerializedReleaseMetadata {
+    schema_version: u32,
+    version: String,
+    tag: String,
+    revision: String,
 }
 
-struct NightlyMetadata {
-    date: String,
-    build_number: u64,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SerializedSourceMetadata {
+    schema_version: u32,
+    revision: String,
+    branch: String,
 }
 
-fn parse_component(name: &str, value: &str) {
-    value
-        .parse::<u16>()
-        .unwrap_or_else(|_| panic!("{name} must be an unsigned 16-bit integer, got {value:?}"));
-}
-
-fn product_version() -> String {
-    let version_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../VERSION");
-    let version = std::fs::read_to_string(&version_path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", version_path.display()));
-    let version = version.trim();
-    let components = version.split('.').collect::<Vec<_>>();
-    let [major, minor, patch] = components.as_slice() else {
-        panic!("OpenVMM VERSION must contain exactly three components, got {version:?}");
+fn read_release_metadata(path: &std::path::Path) -> Option<version::ReleaseMetadata> {
+    let contents = match std::fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => panic!("failed to read {}: {error}", path.display()),
     };
-
-    parse_component("OpenVMM VERSION major component", major);
-    parse_component("OpenVMM VERSION minor component", minor);
-    parse_component("OpenVMM VERSION patch component", patch);
-
-    version.to_owned()
-}
-
-fn optional_env(name: &str) -> Option<String> {
-    match std::env::var(name) {
-        Ok(value) => Some(value),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(std::env::VarError::NotUnicode(_)) => panic!("{name} must be valid Unicode"),
-    }
-}
-
-fn validate_date(date: &str) {
-    if date.len() != 8 || !date.bytes().all(|byte| byte.is_ascii_digit()) {
-        panic!("{BUILD_DATE} must use YYYYMMDD format, got {date:?}");
-    }
-
-    let year = date[0..4].parse::<u16>().unwrap();
-    let month = date[4..6].parse::<u8>().unwrap();
-    let day = date[6..8].parse::<u8>().unwrap();
-    let leap_year =
-        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    let days_in_month = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap_year => 29,
-        2 => 28,
-        _ => panic!("{BUILD_DATE} contains invalid month {month}"),
+    let metadata: SerializedReleaseMetadata = serde_json::from_slice(&contents)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
+    assert_eq!(
+        metadata.schema_version, RELEASE_METADATA_SCHEMA,
+        "unsupported OpenVMM release metadata schema"
+    );
+    let metadata = version::ReleaseMetadata {
+        version: metadata.version,
+        tag: metadata.tag,
+        revision: metadata.revision,
     };
-
-    if day == 0 || day > days_in_month {
-        panic!("{BUILD_DATE} contains invalid day {day} for month {month}");
-    }
+    version::validate_release_metadata(&metadata)
+        .unwrap_or_else(|error| panic!("invalid {}: {error}", path.display()));
+    Some(metadata)
 }
 
-fn build_channel() -> BuildChannel {
-    let channel = optional_env(BUILD_CHANNEL);
-    let date = optional_env(BUILD_DATE);
-    let build_number = optional_env(BUILD_NUMBER);
-
-    match (channel.as_deref(), date, build_number) {
-        (None | Some("dev"), None, None) => BuildChannel::Dev,
-        (Some("release"), None, None) => BuildChannel::Release,
-        (Some("nightly"), Some(date), Some(build_number)) => {
-            validate_date(&date);
-            let parsed_build_number = build_number.parse::<u64>().unwrap_or_else(|_| {
-                panic!("{BUILD_NUMBER} must be an unsigned integer, got {build_number:?}")
-            });
-            if parsed_build_number.to_string() != build_number {
-                panic!(
-                    "{BUILD_NUMBER} must use canonical unsigned integer formatting, got {build_number:?}"
-                );
-            }
-
-            BuildChannel::Nightly(NightlyMetadata {
-                date,
-                build_number: parsed_build_number,
-            })
-        }
-        (Some(channel), _, _) if !matches!(channel, "dev" | "release" | "nightly") => {
-            panic!("{BUILD_CHANNEL} has unsupported value {channel:?}")
-        }
-        _ => panic!("{BUILD_DATE} and {BUILD_NUMBER} are only valid for nightly builds"),
-    }
+fn read_source_metadata(path: &std::path::Path) -> Option<version::SourceMetadata> {
+    let contents = match std::fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => panic!("failed to read {}: {error}", path.display()),
+    };
+    let metadata: SerializedSourceMetadata = serde_json::from_slice(&contents)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()));
+    assert_eq!(
+        metadata.schema_version, SOURCE_METADATA_SCHEMA,
+        "unsupported OpenVMM source metadata schema"
+    );
+    let metadata = version::SourceMetadata {
+        revision: metadata.revision,
+        branch: metadata.branch,
+    };
+    version::validate_source_metadata(&metadata)
+        .unwrap_or_else(|error| panic!("invalid {}: {error}", path.display()));
+    Some(metadata)
 }
 
-fn short_revision(git_info: Option<&build_rs_git_info::GitInfo>) -> Option<&str> {
-    let revision = git_info?.sha();
-    Some(
-        revision
-            .get(..9)
-            .unwrap_or_else(|| panic!("OpenVMM Git revision is too short: {revision:?}")),
-    )
+fn git_source(
+    git_info: &build_rs_git_info::GitInfo,
+    ignore_ci_config_rewrite: bool,
+) -> version::GitSource<'_> {
+    version::GitSource {
+        sha: git_info.sha(),
+        branch: git_info.branch(),
+        tags: git_info.tags(),
+        dirty: git_info.dirty() && !ignore_ci_config_rewrite,
+    }
 }
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../VERSION");
-    println!("cargo:rerun-if-env-changed={BUILD_CHANNEL}");
-    println!("cargo:rerun-if-env-changed={BUILD_DATE}");
-    println!("cargo:rerun-if-env-changed={BUILD_NUMBER}");
+    println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let release_metadata_path = repo_root.join(".openvmm-release.json");
+    let source_metadata_path = repo_root.join(".openvmm-source.json");
+    println!("cargo:rerun-if-changed={}", release_metadata_path.display());
+    println!("cargo:rerun-if-changed={}", source_metadata_path.display());
 
-    let product_version = product_version();
-    let build_channel = build_channel();
-    let git_info = match build_rs_git_info::collect_git_info() {
-        Ok(git_info) => {
-            git_info.emit();
-            Some(git_info)
-        }
+    let git_info = match build_rs_git_info::collect_git_info_at(&repo_root) {
+        Ok(git_info) => Some(git_info),
         Err(error) => {
             println!("cargo:warning=failed to collect OpenVMM git build information: {error:#}");
             None
         }
     };
+    if git_info
+        .as_ref()
+        .is_some_and(|git_info| git_info.shallow() && git_info.branch() == "HEAD")
+        && !git_info.as_ref().is_some_and(|git_info| {
+            git_info
+                .tags()
+                .iter()
+                .any(|tag| tag.starts_with("openvmm-v"))
+        })
+    {
+        println!(
+            "cargo:warning=OpenVMM is being built from a shallow detached checkout without an \
+             exact release tag. The build will report a development version; fetch tags if this \
+             commit is expected to be a release."
+        );
+    }
+    let release_metadata = read_release_metadata(&release_metadata_path);
+    let source_metadata = read_source_metadata(&source_metadata_path);
+    let generated_metadata = release_metadata
+        .as_ref()
+        .map(version::GeneratedMetadata::Release)
+        .or_else(|| {
+            source_metadata
+                .as_ref()
+                .map(version::GeneratedMetadata::Source)
+        });
+    let ignore_ci_config_rewrite = version::ci_config_rewrite_is_only_change(
+        &repo_root,
+        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"),
+    );
+    let version = version::resolve_version(
+        git_info
+            .as_ref()
+            .map(|git_info| git_source(git_info, ignore_ci_config_rewrite)),
+        generated_metadata,
+    )
+    .unwrap_or_else(|error| panic!("failed to resolve OpenVMM version: {error}"));
+    if git_info.is_none() && release_metadata.is_none() && source_metadata.is_none() {
+        println!(
+            "cargo:warning=OpenVMM release metadata is unavailable. This build will report \
+             0.0.0-dev and must not be treated as an official release build. Use a Git checkout \
+             with the release tag available or the official source bundle attached to the GitHub \
+             Release."
+        );
+    }
 
-    let (channel, version) = match build_channel {
-        BuildChannel::Dev => {
-            let version = match short_revision(git_info.as_ref()) {
-                Some(revision) => format!("{product_version}-dev+g{revision}"),
-                None => format!("{product_version}-dev"),
-            };
-            ("dev", version)
-        }
-        BuildChannel::Release => ("release", product_version.clone()),
-        BuildChannel::Nightly(NightlyMetadata { date, build_number }) => {
-            let revision = short_revision(git_info.as_ref())
-                .unwrap_or_else(|| panic!("OpenVMM nightly builds require Git source information"));
-            (
-                "nightly",
-                format!("{product_version}-nightly.{date}.{build_number}.g{revision}"),
-            )
-        }
-    };
-
-    println!("cargo:rustc-env=OPENVMM_PRODUCT_VERSION={product_version}");
-    println!("cargo:rustc-env=OPENVMM_BUILD_CHANNEL={channel}");
-    println!("cargo:rustc-env=OPENVMM_VERSION={version}");
+    println!(
+        "cargo:rustc-env=OPENVMM_PRODUCT_VERSION={}",
+        version.product_version
+    );
+    println!("cargo:rustc-env=OPENVMM_BUILD_CHANNEL={}", version.channel);
+    println!("cargo:rustc-env=OPENVMM_VERSION={}", version.version);
+    println!(
+        "cargo:rustc-env=OPENVMM_RELEASE_TAG={}",
+        version.release_tag
+    );
+    println!("cargo:rustc-env=OPENVMM_SOURCE_DIRTY={}", version.dirty);
+    println!("cargo:rustc-env=BUILD_GIT_SHA={}", version.revision);
+    println!("cargo:rustc-env=BUILD_GIT_BRANCH={}", version.branch);
 }

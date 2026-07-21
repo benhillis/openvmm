@@ -162,6 +162,7 @@ impl IntoPipeline for CheckinGatesCli {
                 .dep_on(
                     |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                         hvlite_repo_source: openvmm_repo_source.clone(),
+                        checkout_depth: Some(1),
                     },
                 )
                 .gh_grant_permissions::<flowey_lib_common::git_checkout::Node>([(
@@ -672,7 +673,6 @@ impl IntoPipeline for CheckinGatesCli {
                             // FIXME: this relies on openvmm default features
                             features: [].into(),
                         },
-                        build_metadata: None,
                         openvmm,
                     }
                 })
@@ -850,7 +850,6 @@ impl IntoPipeline for CheckinGatesCli {
                             features: [flowey_lib_hvlite::build_openvmm::OpenvmmFeature::Tpm]
                                 .into(),
                         },
-                        build_metadata: None,
                         openvmm,
                     }
                 })
@@ -928,7 +927,6 @@ impl IntoPipeline for CheckinGatesCli {
                             features: [flowey_lib_hvlite::build_openvmm::OpenvmmFeature::Tpm]
                                 .into(),
                         },
-                        build_metadata: None,
                         openvmm,
                     }
                 })

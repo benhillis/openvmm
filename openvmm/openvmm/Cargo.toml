@@ -44,6 +44,7 @@ crypto = { workspace = true, features = ["native"] }
 
 [build-dependencies]
 embed-resource.workspace = true
+openvmm_build_info.workspace = true
 
 [lints]
 workspace = true

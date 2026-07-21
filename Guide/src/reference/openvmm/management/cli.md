@@ -7,11 +7,9 @@ The most up to date reference is always the [code itself](https://openvmm.dev/ru
 as well as the generated CLI help (via `cargo run -- --help`).
 ```
 
-* `--version`, `-V`: Prints the OpenVMM build version and exits. The product
-  version comes from the current development train in `openvmm/VERSION`.
-  Untagged builds append a development suffix with the source revision,
-  nightlies append nightly metadata, and tagged releases report the exact
-  product version.
+* `--version`, `-V`: Prints the concise OpenVMM source identity and exits. An
+  exact release tag reports `MAJOR.MINOR.PATCH`; an untagged checkout reports a
+  development version containing the source revision.
 * `--processors <COUNT>`: The number of processors. Defaults to 1.
 * `--memory <SPEC>`: Configure guest RAM. Defaults to `size=1G`.
   `SPEC` can be a size-only shorthand, such as `--memory 4G`, or a

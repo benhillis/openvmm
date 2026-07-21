@@ -9,6 +9,7 @@ flowey_request! {
     #[derive(Clone)]
     pub struct Params {
         pub hvlite_repo_source: flowey_lib_common::git_checkout::RepoSource,
+        pub checkout_depth: Option<usize>,
     }
 }
 
@@ -23,7 +24,10 @@ impl SimpleFlowNode for Node {
     }
 
     fn process_request(request: Self::Request, ctx: &mut NodeCtx<'_>) -> anyhow::Result<()> {
-        let Params { hvlite_repo_source } = request;
+        let Params {
+            hvlite_repo_source,
+            checkout_depth,
+        } = request;
 
         if matches!(ctx.backend(), FlowBackend::Local) {
             ctx.config(flowey_lib_common::git_checkout::Config {
@@ -38,7 +42,7 @@ impl SimpleFlowNode for Node {
             repo_id: "openvmm".into(),
             repo_src: hvlite_repo_source,
             allow_persist_credentials: false,
-            depth: Some(1),           // shallow fetch
+            depth: checkout_depth,
             pre_run_deps: Vec::new(), // no special auth required
         });
 
