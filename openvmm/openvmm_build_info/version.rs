@@ -9,31 +9,16 @@ pub struct ReleaseMetadata {
     pub revision: String,
 }
 
-pub struct SourceMetadata {
+pub struct GitSource {
     pub revision: String,
-    pub branch: String,
-}
-
-pub enum GeneratedMetadata<'a> {
-    Release(&'a ReleaseMetadata),
-    Source(&'a SourceMetadata),
-}
-
-pub struct GitSource<'a> {
-    pub sha: &'a str,
-    pub branch: &'a str,
-    pub tags: &'a [String],
+    pub release_tag: Option<String>,
     pub dirty: bool,
 }
 
 pub struct VersionInfo {
     pub product_version: String,
     pub version: String,
-    pub channel: &'static str,
-    pub release_tag: String,
-    pub dirty: bool,
     pub revision: String,
-    pub branch: String,
 }
 
 pub fn parse_version(version: &str) -> Result<[u16; 3], String> {
@@ -71,7 +56,7 @@ pub fn parse_release_tag(tag: &str) -> Result<&str, String> {
 fn validate_revision(revision: &str) -> Result<(), String> {
     if !matches!(revision.len(), 40 | 64) || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err("OpenVMM release revision must be a full hexadecimal Git object ID".into());
+        return Err("OpenVMM revision must be a full hexadecimal Git object ID".into());
     }
     Ok(())
 }
@@ -84,20 +69,12 @@ pub fn validate_release_metadata(metadata: &ReleaseMetadata) -> Result<(), Strin
     validate_revision(&metadata.revision)
 }
 
-pub fn validate_source_metadata(metadata: &SourceMetadata) -> Result<(), String> {
-    validate_revision(&metadata.revision)
-}
-
-fn exact_release_tag(tags: &[String]) -> Result<Option<&str>, String> {
-    let tags = tags
-        .iter()
-        .filter(|tag| tag.starts_with(RELEASE_TAG_PREFIX))
-        .collect::<Vec<_>>();
+fn select_release_tag(tags: Vec<String>) -> Result<Option<String>, String> {
     match tags.as_slice() {
         [] => Ok(None),
         [tag] => {
             parse_release_tag(tag)?;
-            Ok(Some(tag))
+            Ok(Some(tag.clone()))
         }
         _ => Err(format!(
             "multiple OpenVMM release tags point at HEAD: {tags:?}"
@@ -105,12 +82,112 @@ fn exact_release_tag(tags: &[String]) -> Result<Option<&str>, String> {
     }
 }
 
+fn git_command(repo: &std::path::Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+}
+
+fn git_output(repo: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let output = git_command(repo, args).map_err(|error| format!("failed to run git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map(|output| output.trim().to_owned())
+        .map_err(|error| format!("git {args:?} returned non-UTF8 output: {error}"))
+}
+
+fn ci_config_rewrite_is_only_change(repo: &std::path::Path, github_actions: bool) -> bool {
+    if !github_actions {
+        return false;
+    }
+
+    let config_path = repo.join(".cargo/config.toml");
+    let Ok(current) = std::fs::read_to_string(config_path) else {
+        return false;
+    };
+    let Ok(committed) = git_command(repo, &["show", "HEAD:.cargo/config.toml"]) else {
+        return false;
+    };
+    if !committed.status.success()
+        || current != String::from_utf8_lossy(&committed.stdout).replace("### ENABLE_IN_CI", "")
+    {
+        return false;
+    }
+
+    let Ok(other_changes) = git_command(
+        repo,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+            "--",
+            ".",
+            ":(exclude).cargo/config.toml",
+        ],
+    ) else {
+        return false;
+    };
+    other_changes.status.success() && other_changes.stdout.is_empty()
+}
+
+pub fn collect_git_source(
+    repo: &std::path::Path,
+    github_actions: bool,
+) -> Result<Option<GitSource>, String> {
+    let Ok(prefix) = git_command(repo, &["rev-parse", "--show-prefix"]) else {
+        return Ok(None);
+    };
+    if !prefix.status.success() {
+        return Ok(None);
+    }
+    let prefix = String::from_utf8(prefix.stdout).map_err(|error| {
+        format!("git rev-parse --show-prefix returned non-UTF8 output: {error}")
+    })?;
+    if !prefix.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let revision = git_output(repo, &["rev-parse", "HEAD"])?;
+    validate_revision(&revision)?;
+    let tags = git_output(
+        repo,
+        &["tag", "--points-at", "HEAD", "--list", "openvmm-v*"],
+    )?
+    .lines()
+    .map(str::to_owned)
+    .collect();
+    let release_tag = select_release_tag(tags)?;
+    let status = git_command(repo, &["status", "--porcelain", "--untracked-files=normal"])
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if !status.status.success() {
+        return Err(format!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        ));
+    }
+    let dirty =
+        !status.stdout.is_empty() && !ci_config_rewrite_is_only_change(repo, github_actions);
+
+    Ok(Some(GitSource {
+        revision,
+        release_tag,
+        dirty,
+    }))
+}
+
 pub fn resolve_version(
-    git: Option<GitSource<'_>>,
-    metadata: Option<GeneratedMetadata<'_>>,
+    git: Option<&GitSource>,
+    metadata: Option<&ReleaseMetadata>,
 ) -> Result<VersionInfo, String> {
-    if let Some(git) = &git {
-        if let Some(tag) = exact_release_tag(git.tags)? {
+    if let Some(git) = git {
+        if let Some(tag) = &git.release_tag {
             let product_version = parse_release_tag(tag)?.to_owned();
             let version = if git.dirty {
                 format!("{product_version}+dirty")
@@ -120,116 +197,38 @@ pub fn resolve_version(
             return Ok(VersionInfo {
                 product_version,
                 version,
-                channel: "release",
-                release_tag: tag.to_owned(),
-                dirty: git.dirty,
-                revision: git.sha.to_owned(),
-                branch: git.branch.to_owned(),
+                revision: git.revision.clone(),
             });
         }
-    }
-
-    match metadata {
-        Some(GeneratedMetadata::Release(metadata)) => {
-            validate_release_metadata(metadata)?;
-            return Ok(VersionInfo {
-                product_version: metadata.version.clone(),
-                version: metadata.version.clone(),
-                channel: "release",
-                release_tag: metadata.tag.clone(),
-                dirty: false,
-                revision: metadata.revision.clone(),
-                branch: String::new(),
-            });
-        }
-        Some(GeneratedMetadata::Source(metadata)) => {
-            validate_source_metadata(metadata)?;
-            let revision = metadata.revision.get(..9).ok_or_else(|| {
-                format!(
-                    "OpenVMM source revision is too short: {:?}",
-                    metadata.revision
-                )
-            })?;
-            return Ok(VersionInfo {
-                product_version: "0.0.0".into(),
-                version: format!("0.0.0-dev+g{revision}"),
-                channel: "dev",
-                release_tag: String::new(),
-                dirty: false,
-                revision: metadata.revision.clone(),
-                branch: metadata.branch.clone(),
-            });
-        }
-        None => {}
     }
 
     if let Some(git) = git {
         let revision = git
-            .sha
+            .revision
             .get(..9)
-            .ok_or_else(|| format!("OpenVMM Git revision is too short: {:?}", git.sha))?;
+            .ok_or_else(|| format!("OpenVMM Git revision is too short: {:?}", git.revision))?;
         let dirty = if git.dirty { ".dirty" } else { "" };
         return Ok(VersionInfo {
             product_version: "0.0.0".into(),
             version: format!("0.0.0-dev+g{revision}{dirty}"),
-            channel: "dev",
-            release_tag: String::new(),
-            dirty: git.dirty,
-            revision: git.sha.to_owned(),
-            branch: git.branch.to_owned(),
+            revision: git.revision.clone(),
+        });
+    }
+
+    if let Some(metadata) = metadata {
+        validate_release_metadata(metadata)?;
+        return Ok(VersionInfo {
+            product_version: metadata.version.clone(),
+            version: metadata.version.clone(),
+            revision: metadata.revision.clone(),
         });
     }
 
     Ok(VersionInfo {
         product_version: "0.0.0".into(),
         version: "0.0.0-dev".into(),
-        channel: "dev",
-        release_tag: String::new(),
-        dirty: false,
         revision: String::new(),
-        branch: String::new(),
     })
-}
-
-pub fn ci_config_rewrite_is_only_change(repo_root: &std::path::Path, github_actions: bool) -> bool {
-    if !github_actions {
-        return false;
-    }
-
-    let config_path = repo_root.join(".cargo/config.toml");
-    let Ok(current) = std::fs::read_to_string(config_path) else {
-        return false;
-    };
-    let Ok(committed) = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args(["show", "HEAD:.cargo/config.toml"])
-        .output()
-    else {
-        return false;
-    };
-    if !committed.status.success()
-        || current != String::from_utf8_lossy(&committed.stdout).replace("### ENABLE_IN_CI", "")
-    {
-        return false;
-    }
-
-    let Ok(other_changes) = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .args([
-            "status",
-            "--porcelain",
-            "--untracked-files=normal",
-            "--",
-            ".",
-            ":(exclude).cargo/config.toml",
-        ])
-        .output()
-    else {
-        return false;
-    };
-    other_changes.status.success() && other_changes.stdout.is_empty()
 }
 
 #[cfg(test)]
@@ -241,16 +240,10 @@ mod tests {
 
     const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
-    fn git(tags: &[&str], dirty: bool) -> GitSource<'static> {
+    fn git(tag: Option<&str>, dirty: bool) -> GitSource {
         GitSource {
-            sha: SHA,
-            branch: "main",
-            tags: Box::leak(
-                tags.iter()
-                    .map(|tag| (*tag).to_owned())
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice(),
-            ),
+            revision: SHA.into(),
+            release_tag: tag.map(str::to_owned),
             dirty,
         }
     }
@@ -274,11 +267,19 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let repo = std::env::temp_dir().join(format!(
-            "openvmm-version-info-{}-{nonce}",
-            std::process::id()
-        ));
-        std::fs::create_dir(&repo).unwrap();
+        let repo = (0..100)
+            .find_map(|attempt| {
+                let repo = std::env::temp_dir().join(format!(
+                    "openvmm-version-info-{}-{nonce}-{attempt}",
+                    std::process::id()
+                ));
+                match std::fs::create_dir(&repo) {
+                    Ok(()) => Some(repo),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(error) => panic!("failed to create {}: {error}", repo.display()),
+                }
+            })
+            .expect("failed to create a unique temporary repository");
         run(&repo, &["init", "--quiet"]);
         run(&repo, &["config", "core.autocrlf", "false"]);
         run(&repo, &["config", "core.safecrlf", "false"]);
@@ -296,32 +297,24 @@ mod tests {
     }
 
     #[test]
-    fn exact_tag_is_release_version() {
-        let version = resolve_version(Some(git(&["openvmm-v0.12.3"], false)), None).unwrap();
+    fn resolves_release_and_development_versions() {
+        let release = git(Some("openvmm-v0.12.3"), false);
+        let version = resolve_version(Some(&release), None).unwrap();
         assert_eq!(version.product_version, "0.12.3");
         assert_eq!(version.version, "0.12.3");
-        assert_eq!(version.channel, "release");
-        assert_eq!(version.release_tag, "openvmm-v0.12.3");
         assert_eq!(version.revision, SHA);
-        assert_eq!(version.branch, "main");
-        assert!(!version.dirty);
-    }
 
-    #[test]
-    fn dirty_exact_tag_is_marked_dirty() {
-        let version = resolve_version(Some(git(&["openvmm-v0.12.3"], true)), None).unwrap();
-        assert_eq!(version.product_version, "0.12.3");
-        assert_eq!(version.version, "0.12.3+dirty");
-        assert!(version.dirty);
-    }
+        let dirty_release = git(Some("openvmm-v0.12.3"), true);
+        assert_eq!(
+            resolve_version(Some(&dirty_release), None).unwrap().version,
+            "0.12.3+dirty"
+        );
 
-    #[test]
-    fn untagged_git_is_development_version() {
-        let version = resolve_version(Some(git(&[], true)), None).unwrap();
-        assert_eq!(version.product_version, "0.0.0");
-        assert_eq!(version.version, "0.0.0-dev+g012345678.dirty");
-        assert_eq!(version.channel, "dev");
-        assert_eq!(version.revision, SHA);
+        let development = git(None, true);
+        assert_eq!(
+            resolve_version(Some(&development), None).unwrap().version,
+            "0.0.0-dev+g012345678.dirty"
+        );
     }
 
     #[test]
@@ -331,97 +324,56 @@ mod tests {
             tag: "openvmm-v0.12.3".into(),
             revision: SHA.into(),
         };
-        let version = resolve_version(None, Some(GeneratedMetadata::Release(&metadata))).unwrap();
-        assert_eq!(version.version, "0.12.3");
-        assert_eq!(version.release_tag, "openvmm-v0.12.3");
-        assert_eq!(version.revision, SHA);
-    }
-
-    #[test]
-    fn generated_metadata_precedes_untagged_parent_git() {
-        let metadata = ReleaseMetadata {
-            version: "0.12.3".into(),
-            tag: "openvmm-v0.12.3".into(),
-            revision: SHA.into(),
-        };
-        let version = resolve_version(
-            Some(git(&[], false)),
-            Some(GeneratedMetadata::Release(&metadata)),
-        )
-        .unwrap();
+        let version = resolve_version(None, Some(&metadata)).unwrap();
         assert_eq!(version.version, "0.12.3");
         assert_eq!(version.revision, SHA);
-    }
 
-    #[test]
-    fn exact_tag_precedes_generated_metadata() {
-        let metadata = ReleaseMetadata {
-            version: "0.12.2".into(),
-            tag: "openvmm-v0.12.2".into(),
-            revision: "abcdef0123456789abcdef0123456789abcdef01".into(),
-        };
-        let version = resolve_version(
-            Some(git(&["openvmm-v0.12.3"], false)),
-            Some(GeneratedMetadata::Release(&metadata)),
-        )
-        .unwrap();
-        assert_eq!(version.version, "0.12.3");
-        assert_eq!(version.revision, SHA);
-    }
-
-    #[test]
-    fn no_source_metadata_has_generic_development_version() {
-        let version = resolve_version(None, None).unwrap();
-        assert_eq!(version.version, "0.0.0-dev");
-        assert!(version.revision.is_empty());
-    }
-
-    #[test]
-    fn generated_source_metadata_restores_development_revision() {
-        let metadata = SourceMetadata {
-            revision: SHA.into(),
-            branch: "main".into(),
-        };
-        let version = resolve_version(None, Some(GeneratedMetadata::Source(&metadata))).unwrap();
-        assert_eq!(version.version, "0.0.0-dev+g012345678");
-        assert_eq!(version.revision, SHA);
-        assert_eq!(version.branch, "main");
-    }
-
-    #[test]
-    fn rejects_noncanonical_or_ambiguous_tags() {
-        assert!(parse_release_tag("openvmm-v0.01.0").is_err());
-        assert!(parse_release_tag("openvmm-v0.1").is_err());
-        assert!(
-            resolve_version(
-                Some(git(&["openvmm-v0.1.0", "openvmm-v0.2.0"], false)),
-                None
-            )
-            .is_err()
+        let development = git(None, false);
+        assert_eq!(
+            resolve_version(Some(&development), Some(&metadata))
+                .unwrap()
+                .version,
+            "0.0.0-dev+g012345678"
         );
     }
 
     #[test]
-    fn rejects_inconsistent_generated_metadata() {
+    fn rejects_invalid_or_ambiguous_release_identity() {
+        assert!(parse_release_tag("openvmm-v0.01.0").is_err());
+        assert!(parse_release_tag("openvmm-v0.1").is_err());
+        assert!(
+            select_release_tag(vec!["openvmm-v0.1.0".into(), "openvmm-v0.2.0".into()]).is_err()
+        );
+
         let metadata = ReleaseMetadata {
             version: "0.12.4".into(),
             tag: "openvmm-v0.12.3".into(),
             revision: SHA.into(),
         };
         assert!(validate_release_metadata(&metadata).is_err());
+    }
 
-        let sha256_metadata = ReleaseMetadata {
-            version: "0.12.3".into(),
-            tag: "openvmm-v0.12.3".into(),
-            revision: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
-        };
-        assert!(validate_release_metadata(&sha256_metadata).is_ok());
+    #[test]
+    fn falls_back_without_git_or_release_metadata() {
+        let version = resolve_version(None, None).unwrap();
+        assert_eq!(version.version, "0.0.0-dev");
+        assert!(version.revision.is_empty());
+    }
 
-        let invalid_revision = ReleaseMetadata {
-            revision: "not-a-git-revision".into(),
-            ..sha256_metadata
-        };
-        assert!(validate_release_metadata(&invalid_revision).is_err());
+    #[test]
+    fn collects_only_repository_root_git_identity() {
+        let repo = temporary_repo();
+        run(&repo, &["tag", "openvmm-v0.12.3"]);
+
+        let source = collect_git_source(&repo, false).unwrap().unwrap();
+        assert_eq!(source.release_tag.as_deref(), Some("openvmm-v0.12.3"));
+        assert!(!source.dirty);
+
+        let nested = repo.join("vendored-openvmm");
+        std::fs::create_dir(&nested).unwrap();
+        assert!(collect_git_source(&nested, false).unwrap().is_none());
+
+        std::fs::remove_dir_all(repo).unwrap();
     }
 
     #[test]
@@ -430,15 +382,11 @@ mod tests {
         let config_path = repo.join(".cargo/config.toml");
         std::fs::write(&config_path, "[build]\n rustflags = [\"-Dwarnings\"]\n").unwrap();
 
-        assert!(ci_config_rewrite_is_only_change(&repo, true));
-        assert!(!ci_config_rewrite_is_only_change(&repo, false));
+        assert!(!collect_git_source(&repo, true).unwrap().unwrap().dirty);
+        assert!(collect_git_source(&repo, false).unwrap().unwrap().dirty);
 
         std::fs::write(repo.join("other.txt"), "dirty\n").unwrap();
-        assert!(!ci_config_rewrite_is_only_change(&repo, true));
-        std::fs::remove_file(repo.join("other.txt")).unwrap();
-
-        std::fs::write(&config_path, "[build]\nrustflags = [\"-Dwarnings\"]\n").unwrap();
-        assert!(!ci_config_rewrite_is_only_change(&repo, true));
+        assert!(collect_git_source(&repo, true).unwrap().unwrap().dirty);
 
         std::fs::remove_dir_all(repo).unwrap();
     }
