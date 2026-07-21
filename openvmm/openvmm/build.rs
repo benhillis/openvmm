@@ -3,9 +3,29 @@
 
 #![expect(missing_docs)]
 
+fn numeric_version() -> [u16; 3] {
+    let version = openvmm_build_info::get().product_version();
+    let components = version.split('.').collect::<Vec<_>>();
+    let [major, minor, patch] = components.as_slice() else {
+        panic!("OpenVMM product version must contain exactly three components, got {version:?}");
+    };
+    let parse = |name: &str, value: &str| {
+        value.parse().unwrap_or_else(|_| {
+            panic!("OpenVMM product {name} component must be an unsigned 16-bit integer")
+        })
+    };
+    [
+        parse("major", major),
+        parse("minor", minor),
+        parse("patch", patch),
+    ]
+}
+
 fn main() {
     // Prevent this build script from rerunning unnecessarily.
     println!("cargo:rerun-if-changed=build.rs");
+
+    let [major, minor, patch] = numeric_version();
 
     if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
         println!("cargo:rustc-link-lib=onecore_apiset");
@@ -13,18 +33,8 @@ fn main() {
 
         // Embed version/resource info into the EXE.
         println!("cargo:rerun-if-changed=resources.rc");
-        println!("cargo:rerun-if-env-changed=OPENVMM_MAJOR");
-        println!("cargo:rerun-if-env-changed=OPENVMM_MINOR");
-        println!("cargo:rerun-if-env-changed=OPENVMM_PATCH");
-        println!("cargo:rerun-if-env-changed=OPENVMM_REVISION");
 
-        let parse_u16 = |s: String| s.parse::<u16>().unwrap_or(0);
-        let major = std::env::var("OPENVMM_MAJOR").map(parse_u16).unwrap_or(0);
-        let minor = std::env::var("OPENVMM_MINOR").map(parse_u16).unwrap_or(0);
-        let patch = std::env::var("OPENVMM_PATCH").map(parse_u16).unwrap_or(0);
-        let revision = std::env::var("OPENVMM_REVISION")
-            .map(parse_u16)
-            .unwrap_or(0);
+        let revision = 0;
 
         let macros = [
             (
