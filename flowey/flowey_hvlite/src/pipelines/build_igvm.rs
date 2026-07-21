@@ -417,6 +417,7 @@ impl IntoPipeline for BuildIgvmCli {
         job.dep_on(
             |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                 hvlite_repo_source: openvmm_repo,
+                checkout_depth: Some(1),
             },
         )
         .dep_on(|_| flowey_lib_hvlite::_jobs::cfg_common::Params {

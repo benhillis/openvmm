@@ -94,7 +94,11 @@ impl SimpleFlowNode for Node {
                 tag,
                 title,
                 files,
+                notes: flowey_lib_common::publish_gh_release::GhReleaseNotes::Text("TODO".into()),
                 draft: true,
+                prerelease: false,
+                allow_published_asset_replacement: false,
+                prerequisites: Vec::new(),
                 done,
             },
         ));

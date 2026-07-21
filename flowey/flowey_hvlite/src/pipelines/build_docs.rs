@@ -94,6 +94,7 @@ impl IntoPipeline for BuildDocsCli {
                 .dep_on(
                     |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                         hvlite_repo_source: openvmm_repo_source.clone(),
+                        checkout_depth: Some(1),
                     },
                 )
                 .gh_grant_permissions::<flowey_lib_common::git_checkout::Node>([(

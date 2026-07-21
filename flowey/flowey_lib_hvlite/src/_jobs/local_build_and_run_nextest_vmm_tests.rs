@@ -323,6 +323,7 @@ impl SimpleFlowNode for Node {
                     // FIXME: this relies on openvmm default features
                     features: [].into(),
                 },
+
                 openvmm: v,
             });
             if copy_extras {

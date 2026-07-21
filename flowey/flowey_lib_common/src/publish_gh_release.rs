@@ -10,6 +10,12 @@ flowey_request! {
 }
 
 #[derive(Serialize, Deserialize)]
+pub enum GhReleaseNotes {
+    Generated,
+    Text(String),
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct GhReleaseParams<C = VarNotClaimed> {
     /// First component of a github repo path
     ///
@@ -27,8 +33,16 @@ pub struct GhReleaseParams<C = VarNotClaimed> {
     pub title: ReadVar<String, C>,
     /// Files to upload.
     pub files: ReadVar<Vec<(PathBuf, Option<String>)>, C>,
+    /// Release notes to attach to the release.
+    pub notes: GhReleaseNotes,
     /// Whether the release should be created as a draft
     pub draft: bool,
+    /// Whether the release should be marked as a prerelease.
+    pub prerelease: bool,
+    /// Whether retries may replace assets on an existing published release.
+    pub allow_published_asset_replacement: bool,
+    /// Side effects that must complete before the release is published.
+    pub prerequisites: Vec<ReadVar<SideEffect, C>>,
 
     pub done: WriteVar<SideEffect, C>,
 }
@@ -42,7 +56,11 @@ impl GhReleaseParams {
             tag,
             title,
             files,
+            notes,
             draft,
+            prerelease,
+            allow_published_asset_replacement,
+            prerequisites,
             done,
         } = self;
 
@@ -53,7 +71,11 @@ impl GhReleaseParams {
             tag: tag.claim(ctx),
             title: title.claim(ctx),
             files: files.claim(ctx),
+            notes,
             draft,
+            prerelease,
+            allow_published_asset_replacement,
+            prerequisites: prerequisites.claim(ctx),
             done: done.claim(ctx),
         }
     }
@@ -94,9 +116,17 @@ impl FlowNode for Node {
                         tag,
                         title,
                         files,
+                        notes,
                         draft,
+                        prerelease,
+                        allow_published_asset_replacement,
+                        prerequisites,
                         done: _,
                     } = req;
+
+                    for prerequisite in prerequisites {
+                        rt.read(prerequisite);
+                    }
 
                     let repo = format!("{repo_owner}/{repo_name}");
                     let target = rt.read(target);
@@ -106,20 +136,6 @@ impl FlowNode for Node {
                     //
                     // xshell doesn't give us the exit code, so we have to
                     // use the raw process API instead.
-                    let mut command = std::process::Command::new(&gh_cli);
-                    command
-                        .arg("release").arg("view").arg(&tag).arg("--repo").arg(&repo);
-                    let mut child = command.spawn().context(
-                       "failed to spawn gh cli"
-                    )?;
-                    let status = child.wait()?;
-
-                    // success means the release already exists, so skip publishing this release
-                    if status.success() {
-                        log::info!("GitHub release with tag {tag} already exists in repo {repo}. Skipping...");
-                        continue;
-                    };
-
                     let title = rt.read(title);
                     let files = rt.read(files)
                         .into_iter()
@@ -134,7 +150,47 @@ impl FlowNode for Node {
                         .collect::<Vec<_>>();
                     let draft = draft.then_some("--draft");
 
-                    flowey::shell_cmd!(rt, "{gh_cli} release create --repo {repo} --target {target} {tag} --title {title} --notes TODO {draft...} {files...}").run()?;
+                    let existing_release = std::process::Command::new(&gh_cli)
+                        .args([
+                            "release",
+                            "view",
+                            &tag,
+                            "--repo",
+                            &repo,
+                            "--json",
+                            "isDraft",
+                            "--jq",
+                            ".isDraft",
+                        ])
+                        .output()
+                        .context("failed to run gh release view")?;
+
+                    if existing_release.status.success() {
+                        let is_draft = String::from_utf8(existing_release.stdout)?;
+                        if is_draft.trim() != "true" && !allow_published_asset_replacement {
+                            anyhow::bail!(
+                                "GitHub release with tag {tag} already exists and is not a draft"
+                            );
+                        }
+
+                        log::info!(
+                            "GitHub release with tag {tag} already exists in repo {repo}; replacing \
+                             its assets"
+                        );
+                        flowey::shell_cmd!(
+                            rt,
+                            "{gh_cli} release upload {tag} {files...} --repo {repo} --clobber"
+                        )
+                        .run()?;
+                        continue;
+                    }
+
+                    let notes = match notes {
+                        GhReleaseNotes::Generated => vec!["--generate-notes".to_owned()],
+                        GhReleaseNotes::Text(notes) => vec!["--notes".to_owned(), notes],
+                    };
+                    let prerelease = prerelease.then_some("--prerelease");
+                    flowey::shell_cmd!(rt, "{gh_cli} release create {tag} {files...} --repo {repo} --target {target} --title {title} {notes...} {draft...} {prerelease...}").run()?;
                 }
 
                 Ok(())

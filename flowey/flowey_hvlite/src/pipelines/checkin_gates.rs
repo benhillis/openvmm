@@ -97,7 +97,6 @@ impl IntoPipeline for CheckinGatesCli {
                     pipeline
                         .gh_set_ci_triggers(GhCiTriggers {
                             branches,
-                            tags: vec!["openvmm-v*".into()],
                             paths_ignore: ci_paths_ignore.clone(),
                             ..Default::default()
                         })
@@ -163,6 +162,7 @@ impl IntoPipeline for CheckinGatesCli {
                 .dep_on(
                     |_| flowey_lib_hvlite::_jobs::cfg_hvlite_reposource::Params {
                         hvlite_repo_source: openvmm_repo_source.clone(),
+                        checkout_depth: Some(1),
                     },
                 )
                 .gh_grant_permissions::<flowey_lib_common::git_checkout::Node>([(
@@ -1833,7 +1833,6 @@ impl IntoPipeline for CheckinGatesCli {
                     FlowArch::X86_64,
                     "publish vmgstool",
                 )
-                .gh_dangerous_override_if("github.ref_type != 'tag'")
                 .gh_grant_permissions::<flowey_lib_common::publish_gh_release::Node>([(
                     GhPermission::Contents,
                     GhPermissionValue::Write,
