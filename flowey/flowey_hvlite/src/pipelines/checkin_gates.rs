@@ -287,7 +287,7 @@ impl IntoPipeline for CheckinGatesCli {
                 qc.clone()
             } else {
                 // CI mode: keep standalone linux fmt job
-                let job = pipeline
+                let mut job = pipeline
                     .new_job(
                         FlowPlatform::Linux(FlowPlatformLinuxDistro::Ubuntu),
                         FlowArch::X86_64,
