@@ -298,8 +298,16 @@ impl IntoPipeline for CheckinGatesCli {
                     .side_effect(|done| flowey_lib_hvlite::_jobs::check_xtask_fmt::Request {
                         target: CommonTriple::X86_64_LINUX_GNU,
                         done,
-                    })
-                    .finish();
+                    });
+                if matches!(backend_hint, PipelineBackendHint::Github) {
+                    job = job.side_effect(|done| {
+                        flowey_lib_hvlite::_jobs::validate_openvmm_release_tag::Request {
+                            require_tag: false,
+                            done,
+                        }
+                    });
+                }
+                let job = job.finish();
                 all_jobs.push(job.clone());
                 job
             };
