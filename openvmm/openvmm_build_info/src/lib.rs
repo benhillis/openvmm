@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! OpenVMM product version and source provenance.
+//! OpenVMM product version and source revision.
 
 #![expect(missing_docs)]
 
@@ -13,11 +13,7 @@ mod version;
 pub struct BuildInfo {
     product_version: &'static str,
     version: &'static str,
-    channel: &'static str,
-    release_tag: &'static str,
-    dirty: bool,
     revision: &'static str,
-    branch: &'static str,
 }
 
 impl BuildInfo {
@@ -25,19 +21,7 @@ impl BuildInfo {
         Self {
             product_version: env!("OPENVMM_PRODUCT_VERSION"),
             version: env!("OPENVMM_VERSION"),
-            channel: env!("OPENVMM_BUILD_CHANNEL"),
-            release_tag: env!("OPENVMM_RELEASE_TAG"),
-            dirty: matches!(env!("OPENVMM_SOURCE_DIRTY").as_bytes(), b"true"),
-            revision: if let Some(revision) = option_env!("BUILD_GIT_SHA") {
-                revision
-            } else {
-                ""
-            },
-            branch: if let Some(branch) = option_env!("BUILD_GIT_BRANCH") {
-                branch
-            } else {
-                ""
-            },
+            revision: env!("BUILD_GIT_SHA"),
         }
     }
 
@@ -49,24 +33,8 @@ impl BuildInfo {
         self.version
     }
 
-    pub const fn channel(&self) -> &'static str {
-        self.channel
-    }
-
-    pub const fn release_tag(&self) -> &'static str {
-        self.release_tag
-    }
-
-    pub const fn dirty(&self) -> bool {
-        self.dirty
-    }
-
     pub const fn scm_revision(&self) -> &'static str {
         self.revision
-    }
-
-    pub const fn scm_branch(&self) -> &'static str {
-        self.branch
     }
 }
 
