@@ -5160,3 +5160,194 @@ async fn stop_during_failed_enable_resets_config_pci(_driver: DefaultDriver) {
         PciTestTransport::new(Box::new(PartialFailTestDevice::new(1, 0)), &_driver, 1);
     verify_stop_during_failed_enable_resets_config(&mut transport).await;
 }
+
+/// Test for the `write_at_offset` address-overflow hardening gap.
+///
+/// The readable-payload reader (`read_from_payload_at_offset`) uses
+/// `saturating_add` so a guest-supplied descriptor address that overflows when
+/// the device's write offset is added lands out of range instead of wrapping
+/// to a low GPA. The writable path (`write_at_offset`) uses a plain `+`, so a
+/// descriptor whose `address + offset` overflows `u64` either panics (debug)
+/// or wraps into an unrelated low guest page (release), corrupting memory the
+/// request never described.
+///
+/// Here a writable descriptor sits at `u64::MAX - 0x800` and the device writes
+/// at offset `0x900`, so `address + offset` wraps to GPA `0xFF`. A correct
+/// implementation must fail the write (its real target is out of range) and
+/// MUST NOT touch `0xFF`.
+#[async_test]
+async fn write_at_offset_overflow_does_not_wrap_to_low_gpa(driver: DefaultDriver) {
+    use crate::test_helpers::init_avail_ring;
+    use crate::test_helpers::init_used_ring;
+    use crate::test_helpers::make_available;
+    use crate::test_helpers::write_descriptor;
+
+    let mem = GuestMemory::allocate(0x10000);
+    let desc_addr = 0x1000;
+    let avail_addr = 0x2000;
+    let used_addr = 0x3000;
+    let size: u16 = 4;
+
+    init_avail_ring(&mem, avail_addr);
+    init_used_ring(&mem, used_addr);
+
+    // Sentinel in the low page that the wrapped address (0xFF) would land on.
+    mem.write_at(0xFF, &[0x11]).unwrap();
+
+    // Writable descriptor whose address plus the write offset overflows u64:
+    //   (u64::MAX - 0x800) + 0x900 == 0xFF  (mod 2^64)
+    let overflow_addr = u64::MAX - 0x800;
+    write_descriptor(
+        &mem,
+        desc_addr,
+        0,
+        overflow_addr,
+        0x1000,
+        DescriptorFlags::new().with_write(true),
+        0,
+    );
+    let mut avail_idx = 0;
+    make_available(&mem, avail_addr, size, 0, &mut avail_idx);
+
+    let params = QueueParams {
+        size,
+        enable: true,
+        desc_addr,
+        avail_addr,
+        used_addr,
+    };
+    let queue_event = PolledWait::new(&driver, Event::new()).unwrap();
+    let mut queue = VirtioQueue::new(
+        VirtioDeviceFeatures::new(),
+        params,
+        mem.clone(),
+        Interrupt::null(),
+        queue_event,
+        None,
+    )
+    .unwrap();
+
+    let work = queue.try_next().unwrap().expect("descriptor available");
+
+    // Writing one byte at offset 0x900 targets `overflow_addr + 0x900`, which
+    // overflows u64. A correct implementation rejects it as out of range; the
+    // buggy one panics (debug) or wraps to GPA 0xFF (release).
+    let result = work.write_at_offset(0x900, &mem, &[0xAB]);
+    assert!(
+        result.is_err(),
+        "write to an address that overflows u64 must fail, not wrap around"
+    );
+
+    let mut byte = [0u8; 1];
+    mem.read_at(0xFF, &mut byte).unwrap();
+    assert_eq!(
+        byte[0], 0x11,
+        "overflowing write must not corrupt the wrapped-to low GPA"
+    );
+}
+
+/// Test for the packed-ring full-ring wrap-counter bug.
+///
+/// A single descriptor chain may legally span the entire ring (the maximum
+/// length the spec permits). Consuming and completing such a buffer advances
+/// both the avail and used cursors by `queue_size` — a full lap — which MUST
+/// toggle the respective wrap counters. The device's `(next + count) % size` /
+/// `next < old` check misses the exact-wrap case (`next == old`), leaving both
+/// wrap counters stale; after that, a conformant driver's next (correctly
+/// wrapped) descriptor is invisible to the device.
+///
+/// This drives a real packed `VirtioQueue` through the public API: a
+/// conformant driver makes a full-ring 4-descriptor chain available, the
+/// device consumes and completes it, and the saved queue state must show both
+/// wrap counters flipped.
+#[async_test]
+async fn packed_full_ring_chain_toggles_wrap_counters(driver: DefaultDriver) {
+    // Packed descriptor: address(u64)@0, length(u32)@8, buffer_id(u16)@12,
+    // flags(u16)@14.
+    fn write_packed_desc(
+        mem: &GuestMemory,
+        desc_addr: u64,
+        index: u16,
+        addr: u64,
+        len: u32,
+        buffer_id: u16,
+        flags: DescriptorFlags,
+    ) {
+        let base = desc_addr + index as u64 * 16;
+        mem.write_at(base, &addr.to_le_bytes()).unwrap();
+        mem.write_at(base + 8, &len.to_le_bytes()).unwrap();
+        mem.write_at(base + 12, &buffer_id.to_le_bytes()).unwrap();
+        mem.write_at(base + 14, &flags.into_bits().to_le_bytes())
+            .unwrap();
+    }
+
+    let mem = GuestMemory::allocate(0x10000);
+    let desc_addr = 0x1000;
+    let avail_addr = 0x2000;
+    let used_addr = 0x3000;
+    let data_addr = 0x4000;
+    let size: u16 = 4;
+
+    // Conformant driver, wrap counter = 1: make a chain spanning all `size`
+    // descriptors available (AVAIL=1, USED=0). The buffer id lives on the last
+    // descriptor; every descriptor but the last sets NEXT.
+    for i in 0..size {
+        let last = i == size - 1;
+        let flags = DescriptorFlags::new().with_available(true).with_next(!last);
+        let buffer_id = if last { 42 } else { 0 };
+        write_packed_desc(
+            &mem,
+            desc_addr,
+            i,
+            data_addr + i as u64 * 0x1000,
+            0x1000,
+            buffer_id,
+            flags,
+        );
+    }
+
+    let params = QueueParams {
+        size,
+        enable: true,
+        desc_addr,
+        avail_addr,
+        used_addr,
+    };
+    let queue_event = PolledWait::new(&driver, Event::new()).unwrap();
+    let mut queue = VirtioQueue::new(
+        VirtioDeviceFeatures::new().with_bank(1, VIRTIO_F_VERSION_1 | VIRTIO_F_RING_PACKED),
+        params,
+        mem.clone(),
+        Interrupt::null(),
+        queue_event,
+        None,
+    )
+    .unwrap();
+
+    // The device consumes the full-ring buffer (all four descriptors) and
+    // completes it.
+    let work = queue
+        .try_next()
+        .unwrap()
+        .expect("full-ring buffer available");
+    assert_eq!(
+        work.payload.len(),
+        4,
+        "chain should span all four descriptors"
+    );
+    queue.complete(work, 4);
+
+    // After one full lap a spec-conformant device must have toggled both wrap
+    // counters. The packed queue state encodes the wrap bit at bit 15, so a
+    // correct device reports 0 for both; the buggy device leaves them at
+    // 0x8000.
+    let state = queue.queue_state();
+    assert_eq!(
+        state.avail_index, 0,
+        "avail wrap counter must toggle after a full-ring lap"
+    );
+    assert_eq!(
+        state.used_index, 0,
+        "used wrap counter must toggle after a full-ring lap"
+    );
+}

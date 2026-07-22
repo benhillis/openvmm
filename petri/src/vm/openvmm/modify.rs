@@ -183,7 +183,7 @@ impl PetriVmConfigOpenVmm {
     ///
     /// This exposes a virtio-net device on a PCIe root port, suitable for
     /// guests running virtio drivers (e.g. Linux with UEFI boot).
-    pub fn with_virtio_nic(mut self, port_name: &str) -> Self {
+    pub fn with_virtio_nic(mut self, port_name: &str, mac_address: MacAddress) -> Self {
         let endpoint = net_backend_resources::consomme::ConsommeHandle {
             cidr: None,
             ports: Vec::new(),
@@ -196,7 +196,7 @@ impl PetriVmConfigOpenVmm {
             resource: virtio_resources::VirtioPciDeviceHandle(
                 virtio_resources::net::VirtioNetHandle {
                     max_queues: None,
-                    mac_address: NIC_MAC_ADDRESS,
+                    mac_address,
                     endpoint,
                 }
                 .into_resource(),
@@ -214,7 +214,7 @@ impl PetriVmConfigOpenVmm {
     /// This configures consomme to forward the pipette TCP port from the
     /// host into the guest, so the petri framework can connect to the
     /// pipette agent over TCP.
-    pub fn with_tcp_pipette_nic(mut self, port_name: &str) -> Self {
+    pub fn with_tcp_pipette_nic(mut self, port_name: &str, mac_address: MacAddress) -> Self {
         let (port_send, port_recv) = mesh::oneshot();
         let endpoint = net_backend_resources::consomme::ConsommeHandle {
             cidr: None,
@@ -234,7 +234,7 @@ impl PetriVmConfigOpenVmm {
             resource: virtio_resources::VirtioPciDeviceHandle(
                 virtio_resources::net::VirtioNetHandle {
                     max_queues: None,
-                    mac_address: NIC_MAC_ADDRESS,
+                    mac_address,
                     endpoint,
                 }
                 .into_resource(),
@@ -341,17 +341,49 @@ impl PetriVmConfigOpenVmm {
     /// The file at the given path will be created (or opened) and sized to
     /// match the VM's configured memory. Guest memory is then backed by
     /// this file, which persists across snapshot save/restore.
+    ///
+    /// This forces shared (non-private) memory, since a file-backed mapping
+    /// is incompatible with private anonymous RAM. Panics if the caller
+    /// explicitly requested private memory via
+    /// [`MemoryConfig::private_memory`](crate::MemoryConfig::private_memory),
+    /// rather than silently downgrading it.
     pub fn with_memory_backing_file(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        assert_ne!(
+            self.requested_private_memory,
+            Some(true),
+            "with_memory_backing_file forces shared memory, which conflicts with \
+             the explicitly requested private memory"
+        );
         self.memory_backing_file = Some(path.into());
+        for node in &mut self.config.numa.nodes {
+            if let Some(mem) = &mut node.mem {
+                mem.private_memory = false;
+                mem.transparent_hugepages = false;
+            }
+        }
         self
     }
 
     /// Use explicit hugetlb-backed guest memory.
+    ///
+    /// This forces shared (non-private) memory, since hugetlb backing
+    /// requires a file-backed mapping rather than private anonymous RAM.
+    /// Panics if the caller explicitly requested private memory via
+    /// [`MemoryConfig::private_memory`](crate::MemoryConfig::private_memory),
+    /// rather than silently downgrading it.
     pub fn with_hugepages(mut self, hugepage_size: Option<u64>) -> Self {
+        assert_ne!(
+            self.requested_private_memory,
+            Some(true),
+            "with_hugepages forces shared memory, which conflicts with the \
+             explicitly requested private memory"
+        );
         for node in &mut self.config.numa.nodes {
             if let Some(mem) = &mut node.mem {
                 mem.hugepages = true;
                 mem.hugepage_size = hugepage_size;
+                mem.private_memory = false;
+                mem.transparent_hugepages = false;
             }
         }
         self

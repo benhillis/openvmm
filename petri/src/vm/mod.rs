@@ -654,8 +654,8 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
     /// This removes all VMBus storage controllers. For Linux guests,
     /// virtio-vsock is used for pipette communication. For Windows guests,
     /// the caller must also configure TCP pipette transport via
-    /// `modify_backend(|b| b.with_tcp_pipette_nic())`. The guest must boot
-    /// from a non-VMBus device (e.g. PCIe NVMe).
+    /// `modify_backend(|b| b.with_tcp_pipette_nic(port, mac_address))`. The
+    /// guest must boot from a non-VMBus device (e.g. PCIe NVMe).
     pub fn with_no_vmbus(mut self) -> Self {
         self.no_vmbus = true;
         if self.config.firmware.os_flavor() != OsFlavor::Windows {
@@ -2286,6 +2286,35 @@ pub struct MemoryConfig {
     /// Per-NUMA-node memory sizes. When set, RAM is distributed across
     /// vNUMA nodes instead of assigning all RAM to node 0.
     pub numa_mem_sizes: Option<Vec<u64>>,
+    /// Whether to back guest RAM with private anonymous memory rather than a
+    /// shared (file/memfd-backed) memory section.
+    ///
+    /// - `None` (the default) uses private memory whenever the configuration
+    ///   allows it, falling back to shared memory otherwise. Private anonymous
+    ///   memory is cheaper to set up and eligible for Transparent Huge Pages,
+    ///   so it is preferred for performance; this lets each VM get the best
+    ///   backing for its firmware without the test having to know the details.
+    /// - `Some(true)` explicitly requires private memory. This is an error if
+    ///   the configuration is incompatible with private memory (OpenHCL, which
+    ///   shares VTL0 RAM with VTL2 via a remote mapper, and PCAT/Gen1, which
+    ///   relies on x86 legacy support, both require shared memory), rather than
+    ///   silently downgrading to shared.
+    /// - `Some(false)` explicitly requires shared memory, for tests that need
+    ///   the guest RAM backing to be shareable with another process, such as
+    ///   vhost-user backends.
+    ///
+    /// Only applies to the OpenVMM backend; ignored by Hyper-V.
+    pub private_memory: Option<bool>,
+    /// Mark private guest RAM as eligible for Transparent Huge Pages (THP),
+    /// improving performance for large allocations.
+    ///
+    /// Defaults to `true`. Only takes effect when the guest RAM is backed by
+    /// private anonymous memory (see [`Self::private_memory`]) and only on
+    /// Linux; it is silently ignored otherwise (shared memory, hugetlb/file
+    /// backing, OpenHCL, PCAT/Gen1, or non-Linux hosts).
+    ///
+    /// Only applies to the OpenVMM backend; ignored by Hyper-V.
+    pub transparent_hugepages: bool,
 }
 
 impl Default for MemoryConfig {
@@ -2294,6 +2323,8 @@ impl Default for MemoryConfig {
             startup_bytes: 4 * 1024 * 1024 * 1024, // 4 GiB
             dynamic_memory_range: None,
             numa_mem_sizes: None,
+            private_memory: None,
+            transparent_hugepages: true,
         }
     }
 }
