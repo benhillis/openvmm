@@ -131,6 +131,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey.exe e 0 flowey_lib_common::install_rust 2
+        flowey.exe e 0 flowey_lib_common::install_rust 3
         flowey.exe e 0 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: set '-Dwarnings' in .cargo/config.toml
@@ -291,6 +292,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey e 1 flowey_lib_common::install_rust 2
+        flowey e 1 flowey_lib_common::install_rust 3
         flowey e 1 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: set '-Dwarnings' in .cargo/config.toml
@@ -450,6 +452,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey e 10 flowey_lib_common::install_rust 2
+        flowey e 10 flowey_lib_common::install_rust 3
         flowey e 10 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -781,6 +784,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey e 11 flowey_lib_common::install_rust 2
+        flowey e 11 flowey_lib_common::install_rust 3
         flowey e 11 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -1272,6 +1276,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey e 12 flowey_lib_common::install_rust 2
+        flowey e 12 flowey_lib_common::install_rust 3
         flowey e 12 flowey_lib_common::cfg_cargo_common_flags 0
         flowey e 12 flowey_lib_hvlite::cfg_openvmm_magicpath 0
       shell: bash
@@ -1656,6 +1661,7 @@ jobs:
       run: |-
         flowey.exe e 13 flowey_lib_hvlite::init_openvmm_magicpath_protoc 0
         flowey.exe e 13 flowey_lib_hvlite::init_cross_build 0
+        flowey.exe e 13 flowey_lib_common::install_rust 4
         flowey.exe e 13 flowey_lib_hvlite::init_cross_build 2
       shell: bash
     - name: cargo build xtask
@@ -1913,6 +1919,7 @@ jobs:
       run: |-
         flowey e 14 flowey_lib_common::system_info 0
         flowey e 14 flowey_lib_hvlite::git_checkout_openvmm_repo 0
+        flowey e 14 flowey_lib_common::install_rust 4
       shell: bash
     - name: set '-Dwarnings' in .cargo/config.toml
       run: flowey e 14 flowey_lib_hvlite::init_openvmm_cargo_config_deny_warnings 0
@@ -2353,6 +2360,7 @@ jobs:
     - name: cargo clippy
       run: |-
         flowey e 15 flowey_lib_common::run_cargo_clippy 6
+        flowey e 15 flowey_lib_common::install_rust 4
         flowey e 15 flowey_lib_hvlite::init_cross_build 0
       shell: bash
     - name: cargo build xtask
@@ -2714,6 +2722,7 @@ jobs:
       run: |-
         flowey.exe e 16 flowey_lib_hvlite::init_openvmm_magicpath_protoc 0
         flowey.exe e 16 flowey_lib_hvlite::init_cross_build 0
+        flowey.exe e 16 flowey_lib_common::install_rust 4
         flowey.exe e 16 flowey_lib_hvlite::init_cross_build 2
       shell: bash
     - name: cargo build xtask
@@ -3018,6 +3027,7 @@ jobs:
     - name: cargo clippy
       run: |-
         flowey e 17 flowey_lib_common::run_cargo_clippy 1
+        flowey e 17 flowey_lib_common::install_rust 4
         flowey e 17 flowey_lib_hvlite::init_cross_build 2
       shell: bash
     - name: cargo build xtask
@@ -3386,6 +3396,7 @@ jobs:
     - name: cargo clippy
       run: |-
         flowey e 18 flowey_lib_common::run_cargo_clippy 6
+        flowey e 18 flowey_lib_common::install_rust 4
         flowey e 18 flowey_lib_hvlite::init_cross_build 0
       shell: bash
     - name: cargo build xtask
@@ -3970,6 +3981,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey.exe e 2 flowey_lib_common::install_rust 2
+        flowey.exe e 2 flowey_lib_common::install_rust 3
         flowey.exe e 2 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -6730,6 +6742,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey e 3 flowey_lib_common::install_rust 2
+        flowey e 3 flowey_lib_common::install_rust 3
         flowey e 3 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -7118,6 +7131,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey.exe e 4 flowey_lib_common::install_rust 2
+        flowey.exe e 4 flowey_lib_common::install_rust 3
         flowey.exe e 4 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -7345,6 +7359,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey.exe e 5 flowey_lib_common::install_rust 2
+        flowey.exe e 5 flowey_lib_common::install_rust 4
         flowey.exe e 5 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -7659,6 +7674,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey.exe e 6 flowey_lib_common::install_rust 2
+        flowey.exe e 6 flowey_lib_common::install_rust 3
         flowey.exe e 6 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -7890,6 +7906,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey.exe e 7 flowey_lib_common::install_rust 2
+        flowey.exe e 7 flowey_lib_common::install_rust 4
         flowey.exe e 7 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: check if openvmm needs to be cloned
@@ -8226,6 +8243,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey e 8 flowey_lib_common::install_rust 2
+        flowey e 8 flowey_lib_common::install_rust 4
         flowey e 8 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: checking if packages need to be installed
@@ -8661,6 +8679,7 @@ jobs:
     - name: detect active toolchain
       run: |-
         flowey e 9 flowey_lib_common::install_rust 2
+        flowey e 9 flowey_lib_common::install_rust 4
         flowey e 9 flowey_lib_common::cfg_cargo_common_flags 0
       shell: bash
     - name: checking if packages need to be installed

@@ -157,6 +157,7 @@ impl FlowNode for Node {
 
     fn emit(requests: Vec<Self::Request>, ctx: &mut NodeCtx<'_>) -> anyhow::Result<()> {
         let rust_toolchain = ctx.reqv(crate::install_rust::Request::GetRustupToolchain);
+        let cargo_path = ctx.reqv(crate::install_rust::Request::GetCargoPath);
         let flags = ctx.reqv(crate::cfg_cargo_common_flags::Request::GetFlags);
 
         for Request {
@@ -182,12 +183,14 @@ impl FlowNode for Node {
             ctx.emit_rust_step(format!("cargo build {crate_name}"), |ctx| {
                 pre_build_deps.claim(ctx);
                 let rust_toolchain = rust_toolchain.clone().claim(ctx);
+                let cargo_path = cargo_path.clone().claim(ctx);
                 let flags = flags.clone().claim(ctx);
                 let in_folder = in_folder.claim(ctx);
                 let output = output.claim(ctx);
                 let extra_env = extra_env.claim(ctx);
                 move |rt| {
                     let rust_toolchain = rt.read(rust_toolchain);
+                    let cargo_path = rt.read(cargo_path);
                     let flags = rt.read(flags);
                     let in_folder = rt.read(in_folder);
                     let with_env = rt.read(extra_env).unwrap_or_default();
@@ -204,12 +207,23 @@ impl FlowNode for Node {
                         CargoBuildProfile::Custom(s) => s,
                     };
 
+                    // Precedence for how `cargo` is invoked:
+                    //
+                    // 1. An explicit `cargo` binary path (a standalone
+                    //    toolchain installed outside `$PATH`) — invoke it
+                    //    directly by absolute path, no `rustup`.
+                    // 2. A rustup toolchain name — invoke via `rustup run`.
+                    // 3. Otherwise — plain `cargo` resolved from `$PATH`.
+                    //
                     // would be nice to use +{toolchain} syntax instead, but that
                     // doesn't work on windows via xshell for some reason...
-                    let argv0 = if rust_toolchain.is_some() {
-                        "rustup"
+                    let use_rustup = cargo_path.is_none() && rust_toolchain.is_some();
+                    let argv0: String = if let Some(cargo_path) = &cargo_path {
+                        cargo_path.to_string_lossy().into_owned()
+                    } else if use_rustup {
+                        "rustup".into()
                     } else {
-                        "cargo"
+                        "cargo".into()
                     };
 
                     // FIXME: this flow is vestigial from a time when this node
@@ -218,10 +232,12 @@ impl FlowNode for Node {
                     // this should be replaced with a easier to read + maintain
                     // `xshell` invocation
                     let cmd = CargoBuildCommand {
-                        argv0: argv0.into(),
+                        argv0,
                         params: {
                             let mut v = Vec::new();
-                            if let Some(rust_toolchain) = &rust_toolchain {
+                            if use_rustup {
+                                let rust_toolchain =
+                                    rust_toolchain.as_ref().expect("checked by use_rustup");
                                 v.push("run".into());
                                 v.push(rust_toolchain.into());
                                 v.push("cargo".into());
@@ -271,6 +287,20 @@ impl FlowNode for Node {
                     } = cmd;
 
                     let out_dir = rt.sh.current_dir();
+
+                    // When invoking an explicit `cargo` by absolute path,
+                    // point `rustc` at the binary sibling to it, so the build
+                    // doesn't depend on `rustc` being discoverable on `$PATH`
+                    // either. Callers can still override `RUSTC` via
+                    // `extra_env`.
+                    if let Some(cargo_path) = &cargo_path {
+                        with_env.entry("RUSTC".to_owned()).or_insert_with(|| {
+                            cargo_path
+                                .with_file_name(rt.platform().binary("rustc"))
+                                .to_string_lossy()
+                                .into_owned()
+                        });
+                    }
 
                     rt.sh.change_dir(cargo_work_dir);
                     let mut cmd = flowey::shell_cmd!(rt, "{argv0} {params...}");

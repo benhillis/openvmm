@@ -44,6 +44,21 @@ flowey_request! {
         /// Get the path to $CARGO_HOME
         GetCargoHome(WriteVar<PathBuf>),
 
+        /// Get the explicit path to the `cargo` binary that builds should
+        /// invoke, if the active toolchain is not available on `$PATH`.
+        ///
+        /// Returns `None` when `cargo` should be resolved from `$PATH` (the
+        /// default for rustup-managed toolchains, or any toolchain already
+        /// on `$PATH`). Returns `Some` when a node installs a standalone
+        /// toolchain at a known location and wants builds to invoke it by
+        /// absolute path instead of mutating `$PATH`.
+        ///
+        /// NOTE: currently only [`crate::run_cargo_build`] honors this; the
+        /// other cargo-invoking nodes (clippy/doc/nextest) still resolve
+        /// `cargo` from `$PATH`. A standalone-path toolchain that is not also
+        /// on `$PATH` is therefore only usable for `cargo build` today.
+        GetCargoPath(WriteVar<Option<PathBuf>>),
+
         /// Ensure that Rust was installed and is available on the $PATH
         EnsureInstalled(WriteVar<SideEffect>),
     }
@@ -67,6 +82,7 @@ impl FlowNodeWithConfig for Node {
         let mut additional_components = BTreeSet::new();
         let mut get_rust_toolchain = Vec::new();
         let mut get_cargo_home = Vec::new();
+        let mut get_cargo_path = Vec::new();
 
         for req in requests {
             match req {
@@ -79,6 +95,7 @@ impl FlowNodeWithConfig for Node {
                 }
                 Request::GetRustupToolchain(v) => get_rust_toolchain.push(v),
                 Request::GetCargoHome(v) => get_cargo_home.push(v),
+                Request::GetCargoPath(v) => get_cargo_path.push(v),
             }
         }
 
@@ -423,6 +440,20 @@ impl FlowNodeWithConfig for Node {
                     rt.write_all(get_cargo_home, &cargo_home);
 
                     Ok(())
+                }
+            });
+        }
+
+        if !get_cargo_path.is_empty() {
+            ctx.emit_minor_rust_step("report cargo path", |ctx| {
+                let get_cargo_path = get_cargo_path.claim(ctx);
+                move |rt| {
+                    // this base node installs a rustup-managed toolchain that
+                    // resolves `cargo` from `$PATH`; there is no explicit
+                    // binary path to report.
+                    for var in get_cargo_path {
+                        rt.write(var, &None);
+                    }
                 }
             });
         }

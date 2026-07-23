@@ -133,6 +133,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 0 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 0 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 0 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: $(FLOWEY_BIN) e 0 flowey_lib_hvlite::init_openvmm_cargo_config_deny_warnings 0
@@ -345,6 +346,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 15 flowey_lib_common::run_cargo_clippy 6
+      $(FLOWEY_BIN) e 15 flowey_lib_common::install_rust 3
       $(FLOWEY_BIN) e 15 flowey_lib_hvlite::init_cross_build 0
     displayName: cargo clippy
   - bash: |-
@@ -654,6 +656,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 14 flowey_lib_hvlite::init_openvmm_magicpath_protoc 0
+      $(FLOWEY_BIN) e 14 flowey_lib_common::install_rust 3
       $(FLOWEY_BIN) e 14 flowey_lib_hvlite::init_cross_build 1
     displayName: symlink protoc
   - bash: |-
@@ -985,6 +988,7 @@ jobs:
       set -e
       $(FLOWEY_BIN) e 13 flowey_lib_hvlite::init_openvmm_magicpath_protoc 0
       $(FLOWEY_BIN) e 13 flowey_lib_hvlite::init_cross_build 0
+      $(FLOWEY_BIN) e 13 flowey_lib_common::install_rust 3
       $(FLOWEY_BIN) e 13 flowey_lib_hvlite::init_cross_build 2
     displayName: symlink protoc
   - bash: |-
@@ -1200,6 +1204,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 12 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 12 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 12 flowey_lib_common::cfg_cargo_common_flags 0
       $(FLOWEY_BIN) e 12 flowey_lib_hvlite::cfg_openvmm_magicpath 0
     displayName: detect active toolchain
@@ -1495,6 +1500,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 11 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 11 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 11 flowey_lib_common::cfg_cargo_common_flags 0
       $(FLOWEY_BIN) e 11 flowey_lib_hvlite::cfg_openvmm_magicpath 0
     displayName: detect active toolchain
@@ -1848,6 +1854,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 10 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 10 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 10 flowey_lib_common::cfg_cargo_common_flags 0
       $(FLOWEY_BIN) e 10 flowey_lib_hvlite::cfg_openvmm_magicpath 0
     displayName: detect active toolchain
@@ -2066,6 +2073,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 9 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 9 flowey_lib_common::install_rust 3
       $(FLOWEY_BIN) e 9 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: $(FLOWEY_BIN) e 9 flowey_lib_common::install_dist_pkg 0
@@ -2420,6 +2428,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 8 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 8 flowey_lib_common::install_rust 3
       $(FLOWEY_BIN) e 8 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: $(FLOWEY_BIN) e 8 flowey_lib_common::install_dist_pkg 0
@@ -2799,6 +2808,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 7 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 7 flowey_lib_common::install_rust 3
       $(FLOWEY_BIN) e 7 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: |-
@@ -3090,6 +3100,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 6 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 6 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 6 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: |-
@@ -3306,6 +3317,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 5 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 5 flowey_lib_common::install_rust 3
       $(FLOWEY_BIN) e 5 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: |-
@@ -3592,6 +3604,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 4 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 4 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 4 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: |-
@@ -3765,6 +3778,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 3 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 3 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 3 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: |-
@@ -4352,6 +4366,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 2 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 2 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 2 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: |-
@@ -5717,6 +5732,7 @@ jobs:
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 1 flowey_lib_common::install_rust 1
+      $(FLOWEY_BIN) e 1 flowey_lib_common::install_rust 2
       $(FLOWEY_BIN) e 1 flowey_lib_common::cfg_cargo_common_flags 0
     displayName: detect active toolchain
   - bash: $(FLOWEY_BIN) e 1 flowey_lib_hvlite::init_openvmm_cargo_config_deny_warnings 0
