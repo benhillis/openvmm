@@ -13,6 +13,7 @@ use crate::IsolationType;
 use crate::MemoryConfig;
 use crate::OpenHclConfig;
 use crate::PcieNvmeDrive;
+use crate::PcieVirtioBlkDrive;
 use crate::PetriLogSource;
 use crate::PetriVmConfig;
 use crate::PetriVmResources;
@@ -89,11 +90,14 @@ use video_core::SharedFramebufferHandle;
 use virtio_resources::VirtioPciDeviceHandle;
 use virtio_resources::blk::VirtioBlkHandle;
 use virtio_resources::vsock::VirtioVsockHandle;
+#[cfg(target_os = "linux")]
+use virtio_resources::vsock::VirtioVsockVhostHandle;
 use vm_manifest_builder::VmChipsetResult;
 use vm_manifest_builder::VmManifestBuilder;
 use vm_resource::IntoResource;
 use vm_resource::Resource;
 use vm_resource::kind::SerialBackendHandle;
+use vm_resource::kind::VirtioDeviceHandle;
 use vm_resource::kind::VmbusDeviceHandleKind;
 use vmbus_serial_resources::VmbusSerialDeviceHandle;
 use vmbus_serial_resources::VmbusSerialPort;
@@ -121,6 +125,7 @@ impl PetriVmConfigOpenVmm {
             tpm: tpm_config,
             vmbus_storage_controllers,
             pcie_nvme_drives,
+            pcie_virtio_blk_drives,
             physical_nvme_devices,
         } = petri_vm_config;
 
@@ -131,6 +136,10 @@ impl PetriVmConfigOpenVmm {
         tracing::debug!(?firmware, ?arch, "Petri VM firmware configuration");
 
         let PetriVmResources { driver, log_source } = resources;
+        #[cfg(target_os = "linux")]
+        let vhost_vsock_guest_cid = properties.vhost_vsock_guest_cid;
+        #[cfg(not(target_os = "linux"))]
+        let vhost_vsock_guest_cid: Option<u32> = None;
 
         let mesh = Mesh::new("petri_mesh".to_string())?;
 
@@ -247,6 +256,28 @@ impl PetriVmConfigOpenVmm {
                     }],
                     requests: None,
                 }
+                .into_resource(),
+            });
+        }
+
+        for PcieVirtioBlkDrive {
+            port_name,
+            drive: Drive { disk, .. },
+        } in pcie_virtio_blk_drives
+        {
+            let disk = disk.ok_or_else(|| {
+                anyhow::anyhow!("missing disk for PCIe virtio-blk drive on port '{port_name}'")
+            })?;
+            let disk = petri_disk_to_openvmm(&disk).await?;
+            pcie_devices.push(PcieDeviceConfig {
+                port_name,
+                resource: VirtioPciDeviceHandle(
+                    VirtioBlkHandle {
+                        disk,
+                        read_only: false,
+                    }
+                    .into_resource(),
+                )
                 .into_resource(),
             });
         }
@@ -447,15 +478,16 @@ impl PetriVmConfigOpenVmm {
             // - PCAT (Gen1) relies on x86 legacy support (the VGA hole and
             //   PAM registers), which toggles low RAM visibility in a way
             //   that requires shared, file-backed memory.
-            let private_incompatible = firmware.is_openhcl() || firmware.is_pcat();
+            let private_incompatible =
+                firmware.is_openhcl() || firmware.is_pcat() || vhost_vsock_guest_cid.is_some();
             let private_memory = match private_memory {
                 // An explicit request for private memory that the firmware
                 // cannot honor is an error, rather than a silent downgrade.
                 Some(true) if private_incompatible => {
                     anyhow::bail!(
                         "private guest memory was explicitly requested but is \
-                         not supported with this firmware (OpenHCL and \
-                         PCAT/Gen1 require shared memory)"
+                         not supported with this configuration (OpenHCL, \
+                         PCAT/Gen1, and kernel vhost-vsock require shared memory)"
                     );
                 }
                 Some(explicit) => explicit,
@@ -464,11 +496,11 @@ impl PetriVmConfigOpenVmm {
                 None => !private_incompatible,
             };
 
-            // THP is only valid for private anonymous memory and only on
-            // Linux; disable it otherwise to avoid a memory build error.
-            let transparent_hugepages =
-                transparent_hugepages && private_memory && cfg!(target_os = "linux");
-
+            // THP applies to both private anonymous and shared (file/memfd)
+            // guest RAM, and on both Linux (madvise-based) and Windows
+            // (soft large pages). The membacking layer suppresses it where it
+            // does not apply (e.g. explicit hugetlb backings), so pass the
+            // requested value through unchanged.
             let make_mem = |size: u64| openvmm_defs::config::MemoryConfig {
                 mem_size: size,
                 prefetch_memory: false,
@@ -540,32 +572,6 @@ impl PetriVmConfigOpenVmm {
             }
         };
 
-        let (secure_boot_enabled, custom_uefi_vars) = firmware.uefi_config().map_or_else(
-            || (false, Default::default()),
-            |c| {
-                (
-                    c.secure_boot_enabled,
-                    match (arch, c.secure_boot_template) {
-                        (MachineArch::X86_64, Some(SecureBootTemplate::MicrosoftWindows)) => {
-                            hyperv_secure_boot_templates::x64::microsoft_windows()
-                        }
-                        (
-                            MachineArch::X86_64,
-                            Some(SecureBootTemplate::MicrosoftUefiCertificateAuthority),
-                        ) => hyperv_secure_boot_templates::x64::microsoft_uefi_ca(),
-                        (MachineArch::Aarch64, Some(SecureBootTemplate::MicrosoftWindows)) => {
-                            hyperv_secure_boot_templates::aarch64::microsoft_windows()
-                        }
-                        (
-                            MachineArch::Aarch64,
-                            Some(SecureBootTemplate::MicrosoftUefiCertificateAuthority),
-                        ) => hyperv_secure_boot_templates::aarch64::microsoft_uefi_ca(),
-                        (_, None) => Default::default(),
-                    },
-                )
-            },
-        );
-
         let vmgs = if firmware.is_openhcl() {
             None
         } else {
@@ -593,17 +599,32 @@ impl PetriVmConfigOpenVmm {
                 .map(|i| format!("s0rc0rp{i}"))
                 .find(|name| !pcie_devices.iter().any(|d| d.port_name == *name))
                 .unwrap();
+            let resource: Resource<VirtioDeviceHandle> = match vhost_vsock_guest_cid {
+                #[cfg(target_os = "linux")]
+                Some(guest_cid) => {
+                    let vhost = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open("/dev/vhost-vsock")
+                        .context("failed to open /dev/vhost-vsock")?
+                        .into();
+                    // The kernel backend does not use the Unix relay. Clear it
+                    // so VmbusConfig below does not receive the listener.
+                    vsock_listener = None;
+                    VirtioVsockVhostHandle { vhost, guest_cid }.into_resource()
+                }
+                #[cfg(not(target_os = "linux"))]
+                Some(_) => unreachable!("kernel vhost-vsock is Linux-only"),
+                None => VirtioVsockHandle {
+                    guest_cid: 0x3,
+                    base_path: vsock_path_string.to_string(),
+                    listener: vsock_listener.take().unwrap(),
+                }
+                .into_resource(),
+            };
             pcie_devices.push(PcieDeviceConfig {
                 port_name: vsock_port,
-                resource: VirtioPciDeviceHandle(
-                    VirtioVsockHandle {
-                        guest_cid: 0x3,
-                        base_path: vsock_path_string.to_string(),
-                        listener: vsock_listener.take().unwrap(),
-                    }
-                    .into_resource(),
-                )
-                .into_resource(),
+                resource: VirtioPciDeviceHandle(resource).into_resource(),
             });
         }
 
@@ -666,8 +687,6 @@ impl PetriVmConfigOpenVmm {
             framebuffer,
             vga_firmware,
 
-            secure_boot_enabled,
-            custom_uefi_vars,
             vmgs,
 
             // Don't automatically reset the guest by default
@@ -683,21 +702,6 @@ impl PetriVmConfigOpenVmm {
             vpci_resources: vec![],
             debugger_rpc: None,
             rtc_delta_milliseconds: 0,
-            efi_diagnostics_log_level: match firmware
-                .uefi_config()
-                .map(|c| c.efi_diagnostics_log_level)
-                .unwrap_or_default()
-            {
-                EfiDiagnosticsLogLevel::Default => {
-                    openvmm_defs::config::EfiDiagnosticsLogLevelType::Default
-                }
-                EfiDiagnosticsLogLevel::Info => {
-                    openvmm_defs::config::EfiDiagnosticsLogLevelType::Info
-                }
-                EfiDiagnosticsLogLevel::Full => {
-                    openvmm_defs::config::EfiDiagnosticsLogLevelType::Full
-                }
-            },
         };
 
         // Make the pipette connection listener.
@@ -931,8 +935,8 @@ impl PetriVmConfigSetupCore<'_> {
                             default_boot_always_attempt,
                             enable_vpci_boot,
                             force_dma_bounce,
-                            efi_diagnostics_log_level: _, // applied to top-level Config below
-                            efi_diagnostics_rate_limit: _, // applied to top-level Config below
+                            efi_diagnostics_log_level: _, // applied device-side via UefiManifest::new
+                            efi_diagnostics_rate_limit: _, // applied device-side via UefiManifest::new
                         },
                 },
             ) => {

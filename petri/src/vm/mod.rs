@@ -185,6 +185,9 @@ pub struct PetriVmBuilder<T: PetriVmmBackend> {
     prebuilt_initrd: Option<PathBuf>,
     // Use virtio vsock instead of VMBus-based hvsocket for guest communication.
     use_virtio_vsock: bool,
+    // Use the Linux kernel vhost-vsock backend with this guest CID.
+    #[cfg(target_os = "linux")]
+    vhost_vsock_guest_cid: Option<u32>,
     // Disable VMBus entirely (no vmbus server, no vmbus storage controllers).
     no_vmbus: bool,
 }
@@ -237,6 +240,8 @@ pub struct PetriVmConfig {
     pub vmbus_storage_controllers: HashMap<Guid, VmbusStorageController>,
     /// PCIe NVMe drives.
     pub pcie_nvme_drives: Vec<PcieNvmeDrive>,
+    /// PCIe virtio-blk drives.
+    pub pcie_virtio_blk_drives: Vec<PcieVirtioBlkDrive>,
     /// Physical NVMe devices to attach
     pub physical_nvme_devices: HashMap<Guid, PhysicalNvmeDevice>,
 }
@@ -248,6 +253,15 @@ pub struct PcieNvmeDrive {
     pub port_name: String,
     /// NVMe namespace ID.
     pub nsid: u32,
+    /// The drive to attach.
+    pub drive: Drive,
+}
+
+/// PCIe virtio-blk drive configuration.
+#[derive(Debug)]
+pub struct PcieVirtioBlkDrive {
+    /// PCIe root port name (e.g. "s0rc0rp0").
+    pub port_name: String,
     /// The drive to attach.
     pub drive: Drive,
 }
@@ -293,6 +307,9 @@ pub struct PetriVmProperties {
     pub has_agent_disk: bool,
     /// Use virtio vsock instead of VMBus-based hvsocket
     pub use_virtio_vsock: bool,
+    /// Linux kernel vhost-vsock guest CID, when that backend is enabled.
+    #[cfg(target_os = "linux")]
+    pub vhost_vsock_guest_cid: Option<u32>,
     /// VMBus is entirely disabled
     pub no_vmbus: bool,
 }
@@ -443,6 +460,7 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
                 tpm: None,
                 vmbus_storage_controllers: HashMap::new(),
                 pcie_nvme_drives: Vec::new(),
+                pcie_virtio_blk_drives: Vec::new(),
                 physical_nvme_devices: HashMap::new(),
             },
             modify_vmm_config: None,
@@ -467,6 +485,8 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
             enable_screenshots: true,
             prebuilt_initrd: None,
             use_virtio_vsock: false,
+            #[cfg(target_os = "linux")]
+            vhost_vsock_guest_cid: None,
             no_vmbus: false,
         }
         .add_petri_scsi_controllers()
@@ -520,6 +540,7 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
                 tpm: None,
                 vmbus_storage_controllers: HashMap::new(),
                 pcie_nvme_drives: Vec::new(),
+                pcie_virtio_blk_drives: Vec::new(),
                 physical_nvme_devices: HashMap::new(),
             },
             modify_vmm_config: None,
@@ -544,6 +565,8 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
             enable_screenshots: true,
             prebuilt_initrd: None,
             use_virtio_vsock: false,
+            #[cfg(target_os = "linux")]
+            vhost_vsock_guest_cid: None,
             no_vmbus: false,
         })
     }
@@ -652,6 +675,27 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
     /// blacklist hv_sock instead of virtio_vsock.
     pub fn with_virtio_vsock(mut self) -> Self {
         self.use_virtio_vsock = true;
+        #[cfg(target_os = "linux")]
+        {
+            self.vhost_vsock_guest_cid = None;
+        }
+        self
+    }
+
+    /// Use the Linux kernel vhost-vsock backend for guest communication.
+    ///
+    /// The host connects directly to the guest's `AF_VSOCK` listener at
+    /// `guest_cid`. The OpenVMM backend automatically uses shared guest memory,
+    /// which is required by kernel vhost.
+    #[cfg(target_os = "linux")]
+    pub fn with_vhost_vsock(mut self, guest_cid: u32) -> Self {
+        assert!(
+            (3..u32::MAX).contains(&guest_cid),
+            "vhost-vsock guest CID must be between 3 and {}",
+            u32::MAX - 1
+        );
+        self.use_virtio_vsock = true;
+        self.vhost_vsock_guest_cid = Some(guest_cid);
         self
     }
 
@@ -939,6 +983,13 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
                     });
                     self
                 }
+                BootDeviceType::PcieVirtioBlk => {
+                    self.config.pcie_virtio_blk_drives.push(PcieVirtioBlkDrive {
+                        port_name: "s0rc0rp0".into(),
+                        drive: boot_drive,
+                    });
+                    self
+                }
             }
         } else {
             self
@@ -973,6 +1024,8 @@ impl<T: PetriVmmBackend> PetriVmBuilder<T> {
             prebuilt_initrd: self.prebuilt_initrd.clone(),
             has_agent_disk: self.has_agent_disk(),
             use_virtio_vsock: self.use_virtio_vsock,
+            #[cfg(target_os = "linux")]
+            vhost_vsock_guest_cid: self.vhost_vsock_guest_cid,
             no_vmbus: self.no_vmbus,
         }
     }
@@ -2325,13 +2378,15 @@ pub struct MemoryConfig {
     ///
     /// Only applies to the OpenVMM backend; ignored by Hyper-V.
     pub private_memory: Option<bool>,
-    /// Mark private guest RAM as eligible for Transparent Huge Pages (THP),
+    /// Mark guest RAM as eligible for Transparent Huge Pages (THP),
     /// improving performance for large allocations.
     ///
-    /// Defaults to `true`. Only takes effect when the guest RAM is backed by
-    /// private anonymous memory (see [`Self::private_memory`]) and only on
-    /// Linux; it is silently ignored otherwise (shared memory, hugetlb/file
-    /// backing, OpenHCL, PCAT/Gen1, or non-Linux hosts).
+    /// Defaults to `true`. Applies to private anonymous guest RAM and to
+    /// shared memfd-backed RAM, on Linux (via `madvise`) and on Windows (via
+    /// soft large pages). It has no effect on explicit hugetlb/large-page
+    /// backings (see
+    /// [`with_hugepages`](crate::openvmm::PetriVmConfigOpenVmm::with_hugepages)),
+    /// which are already huge.
     ///
     /// Only applies to the OpenVMM backend; ignored by Hyper-V.
     pub transparent_hugepages: bool,
@@ -2623,6 +2678,8 @@ pub enum BootDeviceType {
     NvmeViaNvme,
     /// Boot from NVMe attached to a PCIe root port.
     PcieNvme,
+    /// Boot from virtio-blk attached to a PCIe root port.
+    PcieVirtioBlk,
 }
 
 impl BootDeviceType {
@@ -2632,7 +2689,8 @@ impl BootDeviceType {
             | BootDeviceType::Ide
             | BootDeviceType::Scsi
             | BootDeviceType::Nvme
-            | BootDeviceType::PcieNvme => false,
+            | BootDeviceType::PcieNvme
+            | BootDeviceType::PcieVirtioBlk => false,
             BootDeviceType::IdeViaScsi
             | BootDeviceType::IdeViaNvme
             | BootDeviceType::ScsiViaScsi
@@ -2651,7 +2709,10 @@ impl BootDeviceType {
 
     fn requires_vmbus(&self) -> bool {
         match self {
-            BootDeviceType::None | BootDeviceType::Ide | BootDeviceType::PcieNvme => false,
+            BootDeviceType::None
+            | BootDeviceType::Ide
+            | BootDeviceType::PcieNvme
+            | BootDeviceType::PcieVirtioBlk => false,
             BootDeviceType::IdeViaScsi
             | BootDeviceType::IdeViaNvme
             | BootDeviceType::Scsi

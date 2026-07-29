@@ -332,8 +332,13 @@ async fn pcie_devices(config: PetriVmBuilder<OpenVmmPetriBackend>) -> anyhow::Re
 }
 
 /// Test PCIe hotplug: hot-add a device to a hotplug-capable port, verify the
-/// guest sees it, then hot-remove it and verify it's gone.
-#[openvmm_test(linux_direct_x64, uefi_x64(vhd(windows_datacenter_core_2022_x64)))]
+/// guest sees it across a reboot, then hot-remove it and verify it's gone.
+#[vmm_test_with(openvmm, configs(linux_direct_x64))]
+#[vmm_test_with(
+    openvmm,
+    requires(windows_partition_reset),
+    configs(uefi_x64(vhd(windows_datacenter_core_2022_x64)))
+)]
 async fn pcie_hotplug(
     config: PetriVmBuilder<OpenVmmPetriBackend>,
     _: (),
@@ -378,6 +383,14 @@ async fn pcie_hotplug(
         timer.sleep(Duration::from_millis(500)).await;
     }
     assert!(found, "expected NVMe endpoint to appear after hot-add");
+
+    agent.reboot().await?;
+    let agent = vm.wait_for_reset().await?;
+
+    let devices = parse_guest_pci_devices(os_flavor, &agent).await?;
+    let endpoints = devices.iter().filter(|d| d.class_code != 0x060400).count();
+    tracing::info!(?devices, "PCI devices after reboot");
+    assert_eq!(endpoints, 1, "expected hot-added endpoint after reboot");
 
     // Wait for the guest to fully process the add event before removing.
     timer.sleep(Duration::from_secs(5)).await;
@@ -518,6 +531,48 @@ async fn pcie_nvme_boot(config: PetriVmBuilder<OpenVmmPetriBackend>) -> anyhow::
     assert!(
         nvme_count >= 2,
         "expected both NVMe controllers (boot on s1rc1, extra on s0rc0) visible in guest, found {nvme_count}"
+    );
+
+    agent.power_off().await?;
+    vm.wait_for_clean_teardown().await?;
+    Ok(())
+}
+
+/// Boot a guest through UEFI from a virtio-blk device on an emulated PCIe root
+/// port. Exercises UEFI's virtio-blk driver stack (UEFI must read the OS off
+/// the device to load it) and confirms the guest's root filesystem lands on the
+/// virtio-blk disk.
+///
+/// Only Linux guests are covered: the base Windows images do not carry an inbox
+/// virtio-blk driver, so Windows cannot mount the OS volume from virtio-blk.
+#[openvmm_test(uefi_x64(vhd(alpine_3_23_x64)), uefi_aarch64(vhd(alpine_3_23_aarch64)))]
+async fn pcie_virtio_blk_boot(config: PetriVmBuilder<OpenVmmPetriBackend>) -> anyhow::Result<()> {
+    let (vm, agent) = config
+        .with_boot_device_type(petri::BootDeviceType::PcieVirtioBlk)
+        .with_default_boot_always_attempt(true)
+        .modify_backend(|b| b.with_pcie_root_topology(1, 1, 1))
+        .run()
+        .await?;
+
+    // Confirm we actually booted from virtio-blk. Linux only assigns the "vd"
+    // prefix to virtio-blk block devices (NVMe uses "nvme*", SCSI uses "sd*"),
+    // so a "/dev/vd*" root device proves the OS was loaded off the virtio-blk
+    // disk rather than some other device.
+    let mounts = String::from_utf8(agent.read_file("/proc/mounts").await?)
+        .context("/proc/mounts is not valid UTF-8")?;
+    let root_device = mounts
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            let source = fields.next()?;
+            let target = fields.next()?;
+            (target == "/").then_some(source)
+        })
+        .context("no root mount found in /proc/mounts")?;
+    tracing::info!(root_device, "guest root device");
+    assert!(
+        root_device.starts_with("/dev/vd"),
+        "expected to boot from a virtio-blk device, but root is {root_device}"
     );
 
     agent.power_off().await?;

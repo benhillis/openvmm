@@ -966,10 +966,11 @@ impl ProtoPartition for WhpProtoPartition<'_> {
     }
 
     fn supports_memory_fault_resolution(&self) -> bool {
-        // WHP forwards guest memory-access faults back to the VMM, so the
-        // memory backing can resolve them on demand (soft large pages, lazy
-        // commit).
-        true
+        // On x86-64, WHP forwards guest memory-access faults back to the VMM, so
+        // the memory backing can resolve them on demand (soft large pages, lazy
+        // commit). WHP on aarch64 does not deliver these faults, so the backing
+        // must not defer any commit or protection to a fault.
+        cfg!(guest_arch = "x86_64")
     }
 
     fn build(
@@ -1759,7 +1760,12 @@ impl<'a> hv1_emulator::VtlProtectAccess for WhpNoVtlProtections<'a> {
         _check_perms: hvdef::HvMapGpaFlags,
         _new_perms: Option<hvdef::HvMapGpaFlags>,
     ) -> Result<guestmem::LockedPages, hvdef::HvError> {
-        Ok(self.0.lock_gpns(false, &[gpn]).unwrap())
+        // Overlay pages are written through the returned locked pages, so lock
+        // them for write.
+        Ok(self
+            .0
+            .lock_gpns(guestmem::AccessType::Write, false, &[gpn])
+            .unwrap())
     }
 
     fn unlock_overlay_page(&mut self, _gpn: u64) -> Result<(), hvdef::HvError> {
