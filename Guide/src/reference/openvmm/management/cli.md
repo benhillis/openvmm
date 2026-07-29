@@ -30,14 +30,14 @@ as well as the generated CLI help (via `cargo run -- --help`).
   Supported keys:
   * `size=<SIZE>` - guest RAM size. Sizes accept `K`, `M`, `G`, and
     `T` suffixes, optionally followed by `B`.
-  * `shared=on|off` - use shared file-backed guest RAM. The default is
+  * `shared[=on|off]` - use shared file-backed guest RAM. The default is
     `on`; `off` uses private anonymous memory.
-  * `prefetch=on|off` - pre-populate guest RAM mappings up front.
+  * `prefetch[=on|off]` - pre-populate guest RAM mappings up front.
     Only has an effect under WHP; a no-op on KVM/mshv.
-  * `thp=on|off` - mark guest RAM (shared or private) as Transparent Huge
+  * `thp[=on|off]` - mark guest RAM (shared or private) as Transparent Huge
     Page eligible. Linux-only, best-effort, and on by default; pass `thp=off` to
     opt out.
-  * `hugepages=on|off` - allocate guest RAM from explicit large/huge pages
+  * `hugepages[=on|off]` - allocate guest RAM from explicit large/huge pages
     (Linux hugetlb pages or a Windows `SEC_LARGE_PAGES` section). Requires
     shared memory.
   * `hugepage_size=<SIZE>` - request a specific large-page size, such
@@ -98,7 +98,7 @@ as well as the generated CLI help (via `cargo run -- --help`).
   controller. The `DISK` argument can be:
   * A flat binary disk image
   * A VHD file with an extension of .vhd (Windows host only)
-  * A VHDX file with an extension of .vhdx (Windows host only)
+  * A VHDX file with an extension of .vhdx
 
   On Linux, raw files and block devices use the `disk_blockdevice` backend
   (io_uring-based async I/O) by default. Append `;direct` to the path to
@@ -165,6 +165,17 @@ as well as the generated CLI help (via `cargo run -- --help`).
   The guest kernel must have `CONFIG_HW_RANDOM_VIRTIO` enabled.
 * `--virtio-rng-bus <BUS>`: Select the bus for the virtio-rng device (`auto`, `mmio`, `pci`, `vpci`).
   Defaults to `auto`.
+* `--virtio-vsock-path <PATH>`: Add a virtio-vsock device using OpenVMM's
+  hybrid Unix-socket relay.
+* `--virtio-vsock-vhost-cid <CID>`: Add a virtio-vsock device backed by the
+  Linux kernel's `vhost_vsock` implementation. This makes the guest reachable
+  from host applications through `AF_VSOCK` at `CID`, which must be between 3
+  and 4294967294 (CIDs 0-2 are reserved for the hypervisor, loopback, and host,
+  respectively, and u32::MAX is the ANY wildcard). This option requires
+  `/dev/vhost-vsock`, the `vhost_vsock` kernel module, and shared file-backed
+  guest RAM (the default memory backing). It uses identity-mapped DMA and
+  does not support a non-identity virtual IOMMU. It conflicts with
+  `--virtio-vsock-path`.
 * `--vhost-user <SOCKET_PATH>,type=<TYPE>[,tag=<NAME>][,num_queues=<N>][,queue_size=<N>][,pcie_port=<PORT>]`: Attach a
   vhost-user device backed by an external process over a Unix socket (Linux
   only). The backend process must already be listening on `SOCKET_PATH`.
@@ -238,6 +249,13 @@ status code as `exit:<code>` (0-255); a bare `exit` uses 0:
 A bare `exit` exits with status 0; `exit:<code>` exits with that code instead, so
 a supervisor can tell the exit reasons apart.
 
+* `--crash-dump-path <PATH>`: when the guest triple-faults, write a
+  WinDbg-compatible `.vmrs` dump of the VM's processor state and guest memory to
+  `PATH` before the `--guest-crash-action` is applied (see
+  [VM Memory Dumps](../../../user_guide/openvmm/vm_memory_dumps.md)). This is a
+  host-side, whole-VM dump, distinct from `--openhcl-dump-path` (OpenHCL's
+  in-guest crash dump device driven by the guest OS).
+
 `--disable-frontpage`: when booting UEFI, power the VM off instead of showing the
 firmware frontpage (the menu shown when there is no bootable device). Combined
 with `--guest-shutdown-action exit`, a guest with no boot device exits the VMM.
@@ -309,6 +327,8 @@ name:
   root port. The value can be decimal or hexadecimal. Default is `0x005f`.
   Use `acs=0` to disable ACS for a root port.
 - `cxl`: marks the root port as CXL-capable.
+- `pasid`: advertises support for TLP prefixing (such as for guest PASID
+  behind a virtual IOMMU)
 
 `--pcie-switch` accepts optional comma-separated options as well:
 
@@ -321,6 +341,8 @@ name:
 - `acs=<mask>`: ACS capability mask requested for downstream switch ports.
   The upstream switch port does not expose ACS. Default is `0x005f`.
   Use `acs=0` to disable ACS for switch downstream ports.
+- `pasid`: advertises support for TLP prefixing (such as for guest PASID
+  behind a virtual IOMMU)
 
 ### Generic initiators
 
@@ -413,7 +435,7 @@ For `--virtio-rng` and `--virtio-console`, use their separate PCIe port flags:
 --iommu id=iommu0 --vfio host=0000:01:00.0,port=rp0,iommu=iommu0
 
 # Pin BAR0 to its physical address for P2P DMA:
---vfio host=0000:01:00.0,port=rp0,bar0=pt
+--vfio host=0000:01:00.0,port=rp0,bar0=host
 ```
 
 ### SMMU (aarch64 only)
