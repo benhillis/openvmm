@@ -81,6 +81,8 @@ version = "0.1.0-dev"
 [workspace.dependencies]
 xtask_fuzz = { path = "xtask/xtask_fuzz" }
 
+openvmm_build_info = { path = "openvmm/openvmm_build_info" }
+
 flowey = { path = "flowey/flowey" }
 flowey_cli = { path = "flowey/flowey_cli" }
 flowey_core = { path = "flowey/flowey_core" }
