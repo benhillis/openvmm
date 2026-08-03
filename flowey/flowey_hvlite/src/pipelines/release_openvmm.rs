@@ -11,7 +11,7 @@
 //! Releasing is deliberately manual. A reviewed pull request advances the
 //! workspace version, but merging it publishes nothing. A maintainer dispatches
 //! this workflow from the branch or tag whose current commit should be released.
-//! GitHub pins that commit for the whole run even if the selected branch moves.
+//! GitHub uses that commit for the whole run even if the selected branch moves.
 //!
 //! The fallible work comes first and the irreversible work comes last. The
 //! distribution build runs against the archive that is about to ship, and only
@@ -79,10 +79,20 @@ fn openvmm_release_pipeline(backend_hint: PipelineBackendHint) -> anyhow::Result
             )])
     });
 
-    // Build the archive this pipeline is about to publish, before publishing
-    // it. The publishing job assembles from the same commit under the same
-    // release identity, and assembly is reproducible, so the archive proved
-    // buildable here and the archive uploaded there are the same bytes.
+    let (publish_release, use_release) = pipeline.new_typed_artifact("openvmm-source-release");
+    pipeline
+        .new_job(
+            FlowPlatform::Linux(FlowPlatformLinuxDistro::Ubuntu),
+            FlowArch::X86_64,
+            "prepare OpenVMM source release",
+        )
+        .gh_set_pool(gh_pools::linux_x64_gh())
+        .publish(publish_release, |release| {
+            flowey_lib_hvlite::_jobs::prepare_openvmm_gh_release::Request { release }
+        })
+        .finish();
+
+    // Build the exact workflow artifact that the publish job will consume.
     let distro_build = pipeline
         .new_job(
             FlowPlatform::Linux(FlowPlatformLinuxDistro::Ubuntu),
@@ -90,7 +100,14 @@ fn openvmm_release_pipeline(backend_hint: PipelineBackendHint) -> anyhow::Result
             "build openvmm [distribution config, x64-linux-gnu]",
         )
         .gh_set_pool(gh_pools::linux_x64_gh())
-        .side_effect(|done| flowey_lib_hvlite::_jobs::check_distro_build::Request { done })
+        .dep_on(
+            |ctx| flowey_lib_hvlite::_jobs::check_distro_build::Request {
+                source: flowey_lib_hvlite::_jobs::check_distro_build::Source::Existing(
+                    ctx.use_typed_artifact(&use_release),
+                ),
+                done: ctx.new_done_handle(),
+            },
+        )
         .finish();
 
     let publish = pipeline
@@ -109,7 +126,12 @@ fn openvmm_release_pipeline(backend_hint: PipelineBackendHint) -> anyhow::Result
             (GhPermission::IdToken, GhPermissionValue::Write),
             (GhPermission::Attestations, GhPermissionValue::Write),
         ])
-        .side_effect(|done| flowey_lib_hvlite::_jobs::publish_openvmm_gh_release::Request { done })
+        .dep_on(
+            |ctx| flowey_lib_hvlite::_jobs::publish_openvmm_gh_release::Request {
+                release: ctx.use_typed_artifact(&use_release),
+                done: ctx.new_done_handle(),
+            },
+        )
         .finish();
     pipeline.non_artifact_dep(&publish, &distro_build);
 

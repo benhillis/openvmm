@@ -19,9 +19,8 @@
 //!
 //! Assembly is reproducible: `git archive` emits a deterministic tar for a
 //! given commit, and `gzip -n` omits the timestamp that would otherwise vary.
-//! Two jobs at the same commit therefore produce the same bytes, which is what
-//! lets the job that builds a release and the job that publishes it each
-//! assemble independently rather than passing an artifact between them.
+//! The release pipeline nevertheless assembles once and transfers those exact
+//! bytes through validation and publication.
 
 use flowey::node::prelude::*;
 
@@ -30,6 +29,11 @@ pub const RELEASE_TAG_PREFIX: &str = "openvmm-v";
 
 /// Checksums covering every published asset.
 pub const CHECKSUM_FILE: &str = "SHA256SUMS";
+
+/// Internal identity transferred with a workflow artifact, but not published.
+///
+/// Flowey includes hidden files when transferring typed artifact directories.
+const IDENTITY_FILE: &str = ".openvmm-source-identity.json";
 
 /// The identity of a source release.
 ///
@@ -42,6 +46,24 @@ pub struct SourceIdentity {
     pub version: String,
     /// The full commit the archive was produced from.
     pub revision: String,
+}
+
+/// The assembled source release transferred between release jobs.
+#[derive(Serialize, Deserialize)]
+pub struct SourceReleaseOutput {
+    /// Directory containing the source archive, [`CHECKSUM_FILE`], and internal
+    /// identity metadata.
+    pub assets: PathBuf,
+}
+
+impl Artifact for SourceReleaseOutput {}
+
+/// Read the identity transferred with assembled release assets.
+pub fn read_source_identity(assets: &Path) -> anyhow::Result<SourceIdentity> {
+    let path = assets.join(IDENTITY_FILE);
+    let contents =
+        fs_err::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_slice(&contents).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 impl SourceIdentity {
@@ -184,6 +206,10 @@ impl SimpleFlowNode for Node {
                 rt.sh.change_dir(&output_dir);
                 let checksums = flowey::shell_cmd!(rt, "sha256sum {archive_name}").output()?;
                 fs_err::write(output_dir.join(CHECKSUM_FILE), checksums.stdout)?;
+                fs_err::write(
+                    output_dir.join(IDENTITY_FILE),
+                    serde_json::to_vec(&identity)?,
+                )?;
 
                 Ok(())
             }
@@ -243,5 +269,20 @@ mod tests {
         // Anything that would escape the archive prefix or an asset name.
         fs_err::write(&manifest, "[workspace.package]\nversion = \"0.1.0/x\"\n").unwrap();
         assert!(workspace_version(&manifest).is_err());
+    }
+
+    #[test]
+    fn transfers_identity_outside_the_published_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity = identity("0.12.3");
+        fs_err::write(
+            dir.path().join(IDENTITY_FILE),
+            serde_json::to_vec(&identity).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(read_source_identity(dir.path()).unwrap(), identity);
+        assert_ne!(IDENTITY_FILE, CHECKSUM_FILE);
+        assert_ne!(IDENTITY_FILE, identity.archive_name());
     }
 }

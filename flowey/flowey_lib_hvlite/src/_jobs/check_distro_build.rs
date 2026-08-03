@@ -16,17 +16,27 @@
 //! downstream packagers silently, and we would not find out until someone
 //! tried to build a release.
 //!
-//! The build runs against the release assets themselves -- assembled by the
-//! same node the release publishes from, then verified and unpacked the way a
-//! packager would. Building the checkout instead would let this pass on a tree
-//! a packager cannot reproduce, since a packager has no `.git` directory and no
-//! untracked files.
+//! The build runs against the release assets themselves, then verifies and
+//! unpacks them the way a packager would. In the release workflow these are the
+//! exact transferred bytes the publish job later uploads. Building the checkout
+//! instead would let this pass on a tree a packager cannot reproduce, since a
+//! packager has no `.git` directory and no untracked files.
 
 use crate::assemble_openvmm_source_release::CHECKSUM_FILE;
+use crate::assemble_openvmm_source_release::SourceReleaseOutput;
 use flowey::node::prelude::*;
+
+#[derive(Serialize, Deserialize)]
+pub enum Source {
+    /// Assemble the source archive from the checkout under test.
+    Assemble,
+    /// Build an already assembled release artifact.
+    Existing(ReadVar<SourceReleaseOutput>),
+}
 
 flowey_request! {
     pub struct Request {
+        pub source: Source,
         pub done: WriteVar<SideEffect>,
     }
 }
@@ -44,7 +54,7 @@ impl SimpleFlowNode for Node {
     }
 
     fn process_request(request: Self::Request, ctx: &mut NodeCtx<'_>) -> anyhow::Result<()> {
-        let Request { done } = request;
+        let Request { source, done } = request;
 
         let target = target_lexicon::triple!("x86_64-unknown-linux-gnu");
 
@@ -82,42 +92,45 @@ impl SimpleFlowNode for Node {
 
         ctx.req(flowey_lib_common::install_rust::Request::InstallTargetTriple(target.clone()));
 
-        // The identity is read out of the tree, so this job and the release
-        // that publishes the same commit necessarily assemble the same archive.
-        // That is what makes running this job on a release meaningful: it
-        // proves the bytes that ship are buildable, not a lookalike.
-        let openvmm_repo_path = ctx.reqv(crate::git_checkout_openvmm_repo::req::GetRepoDir);
-        let resolved = ctx.emit_rust_stepv("resolve source release identity", |ctx| {
-            let openvmm_repo_path = openvmm_repo_path.claim(ctx);
-            move |rt| {
-                let output_dir = std::env::current_dir()?.join("openvmm-source-release");
-                let path = rt.read(openvmm_repo_path);
-                rt.sh.change_dir(path);
+        let source = match source {
+            Source::Assemble => {
+                let openvmm_repo_path = ctx.reqv(crate::git_checkout_openvmm_repo::req::GetRepoDir);
+                let resolved = ctx.emit_rust_stepv("resolve source release identity", |ctx| {
+                    let openvmm_repo_path = openvmm_repo_path.claim(ctx);
+                    move |rt| {
+                        let output_dir = std::env::current_dir()?.join("openvmm-source-release");
+                        let path = rt.read(openvmm_repo_path);
+                        rt.sh.change_dir(path);
 
-                Ok((
-                    crate::assemble_openvmm_source_release::resolve_identity(rt)?,
+                        Ok((
+                            crate::assemble_openvmm_source_release::resolve_identity(rt)?,
+                            output_dir,
+                        ))
+                    }
+                });
+                let identity = resolved.clone().map(ctx, |(identity, _)| identity);
+                let output_dir = resolved.clone().map(ctx, |(_, output_dir)| output_dir);
+                let assembled = ctx.reqv(|done| crate::assemble_openvmm_source_release::Request {
+                    identity,
                     output_dir,
-                ))
+                    done,
+                });
+                resolved
+                    .depending_on(ctx, &assembled)
+                    .map(ctx, |(_, assets)| SourceReleaseOutput { assets })
             }
-        });
-        let identity = resolved.clone().map(ctx, |(identity, _)| identity);
-        let output_dir = resolved.map(ctx, |(_, output_dir)| output_dir);
-
-        let assembled = ctx.reqv(|done| crate::assemble_openvmm_source_release::Request {
-            identity: identity.clone(),
-            output_dir: output_dir.clone(),
-            done,
-        });
-        let output_dir = output_dir.depending_on(ctx, &assembled);
+            Source::Existing(source) => source,
+        };
 
         ctx.emit_rust_step("build openvmm in a distribution configuration", |ctx| {
             done.claim(ctx);
             deps.claim(ctx);
-            let identity = identity.claim(ctx);
-            let output_dir = output_dir.claim(ctx);
+            let source = source.claim(ctx);
             move |rt| {
-                let identity = rt.read(identity);
-                let output_dir = rt.read(output_dir);
+                let source = rt.read(source);
+                let identity =
+                    crate::assemble_openvmm_source_release::read_source_identity(&source.assets)?;
+                let output_dir = source.assets;
 
                 // A packager starts by checking the archive against the
                 // checksums we published, so start there too.

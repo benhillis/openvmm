@@ -37,6 +37,13 @@ fn main() {
             .map(parse_u16)
             .unwrap_or(0);
 
+        // Match the identity used by `openvmm --version`: a checkout that is
+        // not at its matching release tag is a prerelease build, while an
+        // extracted source release has no Git metadata and is a release.
+        let prerelease =
+            openvmm_build_info::get().kind() == openvmm_build_info::BuildKind::Development;
+        let file_flags = if prerelease { 0x2 } else { 0x0 };
+
         let macros = [
             (
                 "OPENVMM_VERSION",
@@ -46,6 +53,7 @@ fn main() {
                 "OPENVMM_VERSION_STR",
                 format!(r#""{major}.{minor}.{patch}.{revision}""#),
             ),
+            ("OPENVMM_FILE_FLAGS", format!("{file_flags:#x}")),
         ];
 
         embed_resource::compile(

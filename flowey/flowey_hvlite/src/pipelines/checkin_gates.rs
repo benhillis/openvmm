@@ -1795,7 +1795,12 @@ impl IntoPipeline for CheckinGatesCli {
                 )
                 .gh_set_pool(gh_pools::linux_x64_gh())
                 .ado_set_pool(ado_pools::default_linux())
-                .side_effect(|done| flowey_lib_hvlite::_jobs::check_distro_build::Request { done })
+                .side_effect(
+                    |done| flowey_lib_hvlite::_jobs::check_distro_build::Request {
+                        source: flowey_lib_hvlite::_jobs::check_distro_build::Source::Assemble,
+                        done,
+                    },
+                )
                 .finish();
 
             all_jobs.push(distro_build_job);
