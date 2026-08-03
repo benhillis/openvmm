@@ -77,7 +77,6 @@ fn watch_git_identity(repo: &Path) {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=version.rs");
-    println!("cargo:rerun-if-env-changed=OPENVMM_PKGVERSION");
 
     let product_version = env!("CARGO_PKG_VERSION");
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -86,8 +85,7 @@ fn main() {
         watch_git_identity(&repo_root);
     }
 
-    let package_version = std::env::var("OPENVMM_PKGVERSION").ok();
-    let version = version::resolve_version(product_version, package_version.as_deref(), git);
+    let version = version::resolve_version(product_version, git);
     let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".into());
     let revision = if version.revision.is_empty() {
         "(not built from a checkout)"
@@ -105,10 +103,6 @@ fn main() {
     );
 
     println!("cargo:rustc-env=OPENVMM_VERSION={}", version.version);
-    println!("cargo:rustc-env=OPENVMM_PRODUCT_VERSION={product_version}");
-    println!("cargo:rustc-env=OPENVMM_BUILD_KIND={}", version.kind.name());
-    println!("cargo:rustc-env=OPENVMM_TARGET={target}");
-    println!("cargo:rustc-env=OPENVMM_REVISION={}", version.revision);
 
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     std::fs::write(out_dir.join("long_version.txt"), long_version)

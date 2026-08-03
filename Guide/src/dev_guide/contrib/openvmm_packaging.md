@@ -108,17 +108,9 @@ dependencies not compiled by the OpenVMM Linux binary.
 
 ## Package identity
 
-The upstream product version comes from the source tree. A distribution may
-set `OPENVMM_PKGVERSION` at compile time to report its own package build
-identifier:
-
-```bash
-export OPENVMM_PKGVERSION="<DISTRIBUTION_PACKAGE_VERSION>"
-```
-
-This changes the displayed build identity to `custom`; it does not claim that
-the binary was built by the OpenVMM project. Keep the upstream OpenVMM version
-separately in package metadata.
+The OpenVMM binary reports the upstream product version committed in the
+source tree. Record any distribution-specific package revision in the
+distribution's package metadata rather than replacing the binary's version.
 
 ## Runtime dependencies
 

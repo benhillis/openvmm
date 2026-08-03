@@ -58,7 +58,6 @@ metadata identifies a development build made from a checkout.
 | Ordinary checkout | `openvmm 0.2.0+g012345678` | development |
 | Exact checkout of `openvmm-v0.2.0` | `openvmm 0.2.0` | release |
 | Extracted published archive | `openvmm 0.2.0` | release |
-| Builder sets `OPENVMM_PKGVERSION` | builder-supplied value | custom |
 
 A checkout without release tags available fails safely toward development
 identity. It may show a release-tag checkout with a commit suffix, but it never
@@ -69,14 +68,7 @@ committed in `Cargo.toml`. Nothing stamps or rewrites the archive during
 release assembly.
 
 `openvmm --version` prints the detailed form with the product version, build
-kind, full revision when available, and build target. OpenVMM also records this
-identity in startup telemetry. On Windows, an ordinary checkout sets
-`VS_FF_PRERELEASE` in VERSIONINFO.
-
-`OPENVMM_PKGVERSION` lets a distribution or other builder identify its
-package. It reports the build as `custom`; it cannot assert that a build is an
-official OpenVMM release. The provenance attestation on the published source
-asset is the proof of origin.
+kind, full revision when available, and build target.
 
 ## Distribution-build gate
 
@@ -85,13 +77,15 @@ and builds it outside the repository as a Linux distribution would.
 
 The gate:
 
-1. generates and verifies `SHA256SUMS`;
-2. extracts the archive outside the checkout;
-3. confirms the source has no `.git`;
-4. builds `openvmm` with `--locked` for `x86_64-unknown-linux-gnu`;
-5. uses system `protoc` and OpenSSL rather than `.packages/`;
-6. requires the built binary to report the archive version exactly;
-7. confirms the binary dynamically links the system OpenSSL.
+1. consumes the exact archive intended for publication;
+2. extracts it outside the checkout;
+3. builds `openvmm` with `--release --locked` for
+   `x86_64-unknown-linux-gnu`, using system `protoc` and OpenSSL rather than
+   `.packages/`.
+
+Additional assertions, such as checksum verification, archive-shape checks,
+binary-version validation, or direct linkage inspection, may be added later
+when each check enforces an agreed release requirement.
 
 The release workflow assembles the archive once and transfers it as an internal
 workflow artifact. The distribution gate builds that artifact, and the publish

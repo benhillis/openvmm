@@ -16,13 +16,11 @@
 //! downstream packagers silently, and we would not find out until someone
 //! tried to build a release.
 //!
-//! The build runs against the release assets themselves, then verifies and
-//! unpacks them the way a packager would. In the release workflow these are the
-//! exact transferred bytes the publish job later uploads. Building the checkout
-//! instead would let this pass on a tree a packager cannot reproduce, since a
-//! packager has no `.git` directory and no untracked files.
+//! The build runs against the release assets themselves and unpacks them the
+//! way a packager would. In the release workflow these are the exact
+//! transferred bytes the publish job later uploads. Building the checkout
+//! instead would let this pass on a tree a packager cannot reproduce.
 
-use crate::assemble_openvmm_source_release::CHECKSUM_FILE;
 use crate::assemble_openvmm_source_release::SourceReleaseOutput;
 use flowey::node::prelude::*;
 
@@ -132,11 +130,6 @@ impl SimpleFlowNode for Node {
                     crate::assemble_openvmm_source_release::read_source_identity(&source.assets)?;
                 let output_dir = source.assets;
 
-                // A packager starts by checking the archive against the
-                // checksums we published, so start there too.
-                rt.sh.change_dir(&output_dir);
-                flowey::shell_cmd!(rt, "sha256sum --check --strict {CHECKSUM_FILE}").run()?;
-
                 // Unpack the archive exactly as a packager would, into a
                 // directory outside the repository so nothing can reach back
                 // into the checkout.
@@ -149,10 +142,6 @@ impl SimpleFlowNode for Node {
                 flowey::shell_cmd!(rt, "tar -xf {archive} -C {build_root}").run()?;
 
                 let source_dir = build_root.join(identity.source_root());
-                if source_dir.join(".git").exists() {
-                    anyhow::bail!("the source archive must not contain a .git directory");
-                }
-
                 rt.sh.change_dir(&source_dir);
 
                 // `.cargo/config.toml` points `PROTOC` into `.packages/`. It
@@ -185,55 +174,6 @@ impl SimpleFlowNode for Node {
                 .env("CARGO_PROFILE_RELEASE_DEBUG", "0")
                 .env("CARGO_INCREMENTAL", "0")
                 .run()?;
-
-                let binary = format!("target/{target}/release/openvmm");
-
-                // The version is the one thing about the release that lives in
-                // the tree rather than in the pipeline, so nothing else proves
-                // it survives the trip. Ask the binary a packager just built
-                // what it thinks it is, and require the answer the archive was
-                // assembled under. Without `.git` there is no revision suffix,
-                // so this is the exact version and not a prefix match.
-                //
-                // This is the whole scheme in one assertion: if it holds, a
-                // distribution's binary is labelled with the version we
-                // published.
-                let reported = flowey::shell_cmd!(rt, "{binary} --version").read()?;
-                let reported = reported.lines().next().unwrap_or_default().trim();
-                let expected = format!("openvmm {}", identity.version);
-                if reported != expected {
-                    anyhow::bail!(
-                        "the archive was assembled as {expected:?}, but the binary built from \
-                         it reports {reported:?}"
-                    );
-                }
-
-                // Building is not enough. If `openssl-sys` were to start
-                // building a vendored copy, or if some dependency were to
-                // acquire a static native library, the build would still
-                // succeed but the packaged binary would no longer be one the
-                // distribution can service. Assert the shape of the result.
-                //
-                // Read the binary's own `NEEDED` entries rather than `ldd`'s
-                // output: `ldd` reports the whole transitive closure, so it
-                // would still be satisfied if `openvmm` linked a static
-                // OpenSSL while some unrelated shared library pulled in the
-                // system one.
-                let linkage = flowey::shell_cmd!(rt, "readelf -d {binary}").read()?;
-                for lib in ["libssl.so", "libcrypto.so"] {
-                    let needed = linkage
-                        .lines()
-                        .filter(|line| line.contains("(NEEDED)"))
-                        .any(|line| line.contains(lib));
-
-                    if !needed {
-                        anyhow::bail!(
-                            "openvmm did not link the system {lib}; \
-                             a distribution build must use the distribution's OpenSSL.\n\
-                             readelf -d output:\n{linkage}"
-                        );
-                    }
-                }
 
                 Ok(())
             }

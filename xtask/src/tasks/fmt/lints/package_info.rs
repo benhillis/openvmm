@@ -44,9 +44,8 @@ use toml_edit::Table;
 /// OpenVMM is released as a source archive that packagers build. The version
 /// has to travel inside the source, since a packager builds long after any
 /// pipeline that could have supplied it, and from a tree with no git history
-/// to recover it from. Both are read: `openvmm_build_info` reports the product
-/// and build identity, and `openvmm`'s build script stamps the product version
-/// into the Windows VERSIONINFO resource.
+/// to recover it from. Cargo identifies the product package with this version,
+/// and `openvmm_build_info` exposes the corresponding CLI identity.
 ///
 /// If this list grows much past a handful, replace it with a
 /// `package.metadata.xtask.house-rules` opt-in, the way `excluded-from-workspace`

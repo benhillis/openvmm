@@ -7,23 +7,13 @@ const RELEASE_TAG_PREFIX: &str = "openvmm-v";
 pub enum BuildKind {
     Release,
     Development,
-    Custom,
 }
 
 impl BuildKind {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Release => "release",
-            Self::Development => "development",
-            Self::Custom => "custom",
-        }
-    }
-
     pub const fn description(self) -> &'static str {
         match self {
             Self::Release => "release",
             Self::Development => "development (not an official release)",
-            Self::Custom => "custom (built with OPENVMM_PKGVERSION)",
         }
     }
 }
@@ -39,19 +29,7 @@ pub struct VersionInfo {
     pub revision: String,
 }
 
-pub fn resolve_version(
-    product_version: &str,
-    package_version: Option<&str>,
-    git: Option<GitSource>,
-) -> VersionInfo {
-    if let Some(package_version) = package_version.filter(|value| !value.is_empty()) {
-        return VersionInfo {
-            version: package_version.to_owned(),
-            kind: BuildKind::Custom,
-            revision: git.map_or_else(String::new, |git| git.revision),
-        };
-    }
-
+pub fn resolve_version(product_version: &str, git: Option<GitSource>) -> VersionInfo {
     let Some(git) = git else {
         return VersionInfo {
             version: product_version.to_owned(),
@@ -98,7 +76,7 @@ mod tests {
 
     #[test]
     fn an_archive_reports_the_product_version() {
-        let version = resolve_version("0.2.0", None, None);
+        let version = resolve_version("0.2.0", None);
         assert_eq!(version.version, "0.2.0");
         assert_eq!(version.kind, BuildKind::Release);
         assert!(version.revision.is_empty());
@@ -106,7 +84,7 @@ mod tests {
 
     #[test]
     fn an_ordinary_checkout_includes_the_revision() {
-        let version = resolve_version("0.2.0", None, Some(git(&[])));
+        let version = resolve_version("0.2.0", Some(git(&[])));
         assert_eq!(version.version, "0.2.0+g012345678");
         assert_eq!(version.kind, BuildKind::Development);
         assert_eq!(version.revision, REVISION);
@@ -114,7 +92,7 @@ mod tests {
 
     #[test]
     fn the_exact_matching_tag_reports_a_release() {
-        let version = resolve_version("0.2.0", None, Some(git(&["openvmm-v0.2.0"])));
+        let version = resolve_version("0.2.0", Some(git(&["openvmm-v0.2.0"])));
         assert_eq!(version.version, "0.2.0");
         assert_eq!(version.kind, BuildKind::Release);
     }
@@ -125,39 +103,19 @@ mod tests {
             &["openvmm-v0.1.0"][..],
             &["openvmm-v0.2.0", "openvmm-v0.1.0"][..],
         ] {
-            let version = resolve_version("0.2.0", None, Some(git(tags)));
+            let version = resolve_version("0.2.0", Some(git(tags)));
             assert_eq!(version.version, "0.2.0+g012345678");
             assert_eq!(version.kind, BuildKind::Development);
         }
     }
 
     #[test]
-    fn a_package_override_is_custom() {
-        let version = resolve_version(
-            "0.2.0",
-            Some("Distribution package 0.2.0-4"),
-            Some(git(&[])),
-        );
-        assert_eq!(version.version, "Distribution package 0.2.0-4");
-        assert_eq!(version.kind, BuildKind::Custom);
-        assert_eq!(version.revision, REVISION);
-    }
-
-    #[test]
-    fn build_kind_has_stable_output_names() {
-        assert_eq!(BuildKind::Release.name(), "release");
-        assert_eq!(BuildKind::Development.name(), "development");
-        assert_eq!(BuildKind::Custom.name(), "custom");
+    fn build_kind_describes_development_builds() {
         assert_eq!(BuildKind::Release.description(), "release");
         assert!(
             BuildKind::Development
                 .description()
                 .contains("not an official release")
-        );
-        assert!(
-            BuildKind::Custom
-                .description()
-                .contains("OPENVMM_PKGVERSION")
         );
     }
 }
