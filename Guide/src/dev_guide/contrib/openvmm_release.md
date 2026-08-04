@@ -56,12 +56,12 @@ metadata identifies a development build made from a checkout.
 | Source shape | Example `openvmm -V` | Build kind |
 | --- | --- | --- |
 | Ordinary checkout | `openvmm 0.2.0+g012345678` | development |
-| Exact checkout of `openvmm-v0.2.0` | `openvmm 0.2.0` | release |
+| Checkout of `openvmm-v0.2.0` | `openvmm 0.2.0+g012345678` | development |
 | Extracted published archive | `openvmm 0.2.0` | release |
 
-A checkout without release tags available fails safely toward development
-identity. It may show a release-tag checkout with a commit suffix, but it never
-misidentifies an ordinary checkout as a release.
+Every Git checkout reports development identity, including an exact checkout
+of a release tag. Release tags are publication markers and are not inspected
+when deriving build identity.
 
 An extracted archive has no Git history, so Cargo reads the version already
 committed in `Cargo.toml`. Nothing stamps or rewrites the archive during
@@ -82,6 +82,10 @@ The gate:
 3. builds `openvmm` with `--release --locked` for
    `x86_64-unknown-linux-gnu`, using system `protoc` and OpenSSL rather than
    `.packages/`.
+
+This standalone build does not use `openvmm-deps`. OpenHCL sysroots, firmware,
+and test assets from that repository are not required to build the standalone
+OpenVMM binary.
 
 Additional assertions, such as checksum verification, archive-shape checks,
 binary-version validation, or direct linkage inspection, may be added later
@@ -161,7 +165,8 @@ Publishing the draft is the irreversible step. GitHub creates
 the release.
 
 After publication, do not move the tag or replace assets. Correct a release
-problem with a new version.
+problem with a reviewed pull request selecting a new patch version, followed
+by a new release.
 
 ## Minimum Rust version
 

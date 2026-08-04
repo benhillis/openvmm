@@ -50,19 +50,11 @@ fn collect_git_source(repo: &Path) -> Option<version::GitSource> {
         panic!("git returned an invalid OpenVMM revision: {revision:?}");
     }
 
-    let tags = git(
-        repo,
-        &["tag", "--points-at", "HEAD", "--list", "openvmm-v*"],
-    )?
-    .lines()
-    .map(str::to_owned)
-    .collect();
-
-    Some(version::GitSource { revision, tags })
+    Some(version::GitSource { revision })
 }
 
 fn watch_git_identity(repo: &Path) {
-    for name in ["HEAD", "packed-refs", "refs/tags"] {
+    for name in ["HEAD", "packed-refs"] {
         if let Some(path) = git_path(repo, name) {
             println!("cargo:rerun-if-changed={}", path.display());
         }

@@ -10,9 +10,9 @@ as well as the generated CLI help (via `cargo run -- --help`).
 * `--version`, `-V`: Print the OpenVMM build identity and exit. `-V` prints
   the concise identity. `--version` also prints the upstream product version,
   build kind, full Git revision when available, and build target. An ordinary
-  checkout reports `MAJOR.MINOR.PATCH+g<SHORT_REVISION>`. The exact matching
-  `openvmm-vMAJOR.MINOR.PATCH` tag and the published source archive report
-  `MAJOR.MINOR.PATCH`.
+  checkout reports `MAJOR.MINOR.PATCH+g<SHORT_REVISION>`. This includes an
+  exact checkout of an `openvmm-vMAJOR.MINOR.PATCH` release tag. A Git-free
+  published source archive reports `MAJOR.MINOR.PATCH`.
 * `--processors <COUNT>`: The number of processors. Defaults to 1.
 * `--memory <SPEC>`: Configure guest RAM. Defaults to `size=1G`.
   `SPEC` can be a size-only shorthand, such as `--memory 4G`, or a
