@@ -199,9 +199,8 @@ impl SimpleFlowNode for Node {
                 fs_err::write(&source_archive, compressed.stdout)?;
                 fs_err::remove_file(source_tar)?;
 
-                // Checksums are a published asset, so generate them here rather
-                // than in the publishing job. That way CI verifies the same
-                // file a consumer will check against.
+                // Checksums are a published asset, so generate them alongside
+                // the archive and transfer both unchanged to publication.
                 let archive_name = identity.archive_name();
                 rt.sh.change_dir(&output_dir);
                 let checksums = flowey::shell_cmd!(rt, "sha256sum {archive_name}").output()?;

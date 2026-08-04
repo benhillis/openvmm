@@ -81,8 +81,8 @@ cargo build --release --locked -p openvmm \
 ```
 
 OpenVMM CI runs this distribution configuration on every change. It builds the
-assembled source archive outside the repository and confirms that the
-resulting executable dynamically links the system OpenSSL.
+assembled source archive outside the repository using locked Cargo
+dependencies and the distribution's system dependencies.
 
 ## Offline builds
 
