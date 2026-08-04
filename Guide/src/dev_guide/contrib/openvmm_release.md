@@ -130,14 +130,15 @@ The workflow:
 5. transfers and builds those exact assets in the distribution configuration;
 6. transfers the same assets to the publish job;
 7. generates provenance attestations;
-8. creates a draft GitHub release targeting the pinned commit.
+8. creates a draft GitHub release with empty notes, targeting the pinned
+   commit.
 
 A failed run may be rerun from the same workflow run, which retains the same
 commit. A fresh dispatch pins the then-current `main` commit.
 
-If a draft already exists for the version, the workflow deletes and recreates
-that draft with the newly assembled assets. It refuses to alter a published
-release or an existing Git tag.
+If a draft or published release already exists for the version, the workflow
+fails without modifying it. Delete an unwanted draft manually before rerunning.
+An existing Git tag is also rejected.
 
 ### 4. Review the draft
 
@@ -148,7 +149,8 @@ Before publishing, confirm:
 - the source archive and `SHA256SUMS` are present;
 - the checksum validates;
 - both assets have provenance attestations;
-- generated notes describe the intended changes and mention any Rust requirement change.
+- release notes describe the intended changes and mention any Rust requirement
+  change.
 
 Verify downloaded assets with:
 

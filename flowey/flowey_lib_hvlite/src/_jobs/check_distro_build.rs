@@ -24,17 +24,9 @@
 use crate::assemble_openvmm_source_release::SourceReleaseOutput;
 use flowey::node::prelude::*;
 
-#[derive(Serialize, Deserialize)]
-pub enum Source {
-    /// Assemble the source archive from the checkout under test.
-    Assemble,
-    /// Build an already assembled release artifact.
-    Existing(ReadVar<SourceReleaseOutput>),
-}
-
 flowey_request! {
     pub struct Request {
-        pub source: Source,
+        pub release: ReadVar<SourceReleaseOutput>,
         pub done: WriteVar<SideEffect>,
     }
 }
@@ -45,14 +37,12 @@ impl SimpleFlowNode for Node {
     type Request = Request;
 
     fn imports(ctx: &mut ImportCtx<'_>) {
-        ctx.import::<crate::assemble_openvmm_source_release::Node>();
-        ctx.import::<crate::git_checkout_openvmm_repo::Node>();
         ctx.import::<flowey_lib_common::install_rust::Node>();
         ctx.import::<flowey_lib_common::install_dist_pkg::Node>();
     }
 
     fn process_request(request: Self::Request, ctx: &mut NodeCtx<'_>) -> anyhow::Result<()> {
-        let Request { source, done } = request;
+        let Request { release, done } = request;
 
         let target = target_lexicon::triple!("x86_64-unknown-linux-gnu");
 
@@ -90,45 +80,15 @@ impl SimpleFlowNode for Node {
 
         ctx.req(flowey_lib_common::install_rust::Request::InstallTargetTriple(target.clone()));
 
-        let source = match source {
-            Source::Assemble => {
-                let openvmm_repo_path = ctx.reqv(crate::git_checkout_openvmm_repo::req::GetRepoDir);
-                let resolved = ctx.emit_rust_stepv("resolve source release identity", |ctx| {
-                    let openvmm_repo_path = openvmm_repo_path.claim(ctx);
-                    move |rt| {
-                        let output_dir = std::env::current_dir()?.join("openvmm-source-release");
-                        let path = rt.read(openvmm_repo_path);
-                        rt.sh.change_dir(path);
-
-                        Ok((
-                            crate::assemble_openvmm_source_release::resolve_identity(rt)?,
-                            output_dir,
-                        ))
-                    }
-                });
-                let identity = resolved.clone().map(ctx, |(identity, _)| identity);
-                let output_dir = resolved.clone().map(ctx, |(_, output_dir)| output_dir);
-                let assembled = ctx.reqv(|done| crate::assemble_openvmm_source_release::Request {
-                    identity,
-                    output_dir,
-                    done,
-                });
-                resolved
-                    .depending_on(ctx, &assembled)
-                    .map(ctx, |(_, assets)| SourceReleaseOutput { assets })
-            }
-            Source::Existing(source) => source,
-        };
-
         ctx.emit_rust_step("build openvmm in a distribution configuration", |ctx| {
             done.claim(ctx);
             deps.claim(ctx);
-            let source = source.claim(ctx);
+            let release = release.claim(ctx);
             move |rt| {
-                let source = rt.read(source);
+                let release = rt.read(release);
                 let identity =
-                    crate::assemble_openvmm_source_release::read_source_identity(&source.assets)?;
-                let output_dir = source.assets;
+                    crate::assemble_openvmm_source_release::read_source_identity(&release.assets)?;
+                let output_dir = release.assets;
 
                 // Unpack the archive exactly as a packager would, into a
                 // directory outside the repository so nothing can reach back

@@ -17,6 +17,11 @@
 //! files, and CI, which builds them. CI would otherwise be testing a lookalike
 //! rather than the thing that actually ships.
 //!
+//! GitHub's automatic tag archives cannot be assembled or validated before
+//! publication. This archive is available to the distribution-build gate
+//! before the tag exists, then published with its chosen name, checksum, and
+//! provenance attestation.
+//!
 //! Assembly is reproducible: `git archive` emits a deterministic tar for a
 //! given commit, and `gzip -n` omits the timestamp that would otherwise vary.
 //! The release pipeline nevertheless assembles once and transfers those exact

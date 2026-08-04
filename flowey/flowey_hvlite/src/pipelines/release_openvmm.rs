@@ -15,11 +15,11 @@
 //!
 //! The fallible work comes first and the irreversible work comes last. The
 //! distribution build runs against the archive that is about to ship, and only
-//! then is anything published -- so a build that fails, or a guard that
-//! refuses, costs nothing but a re-run. The tag is the last thing to exist at
-//! all: the release is created as a draft, and GitHub does not create a draft
-//! release's tag until a human publishes it. Redistributors build from tags, so
-//! a tag should never name a release that turned out not to happen.
+//! then is publication attempted. Existing releases are never modified
+//! automatically. The tag is the last thing to exist at all: the release is
+//! created as a draft, and GitHub does not create a draft release's tag until a
+//! human publishes it. Redistributors build from tags, so a tag should never
+//! name a release that turned out not to happen.
 
 use crate::pipelines_shared::gh_pools;
 use flowey::node::prelude::FlowPlatformLinuxDistro;
@@ -102,9 +102,7 @@ fn openvmm_release_pipeline(backend_hint: PipelineBackendHint) -> anyhow::Result
         .gh_set_pool(gh_pools::linux_x64_gh())
         .dep_on(
             |ctx| flowey_lib_hvlite::_jobs::check_distro_build::Request {
-                source: flowey_lib_hvlite::_jobs::check_distro_build::Source::Existing(
-                    ctx.use_typed_artifact(&use_release),
-                ),
+                release: ctx.use_typed_artifact(&use_release),
                 done: ctx.new_done_handle(),
             },
         )

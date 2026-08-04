@@ -74,15 +74,15 @@ impl SimpleFlowNode for Node {
                 tag,
                 title,
                 files,
-                notes: flowey_lib_common::publish_gh_release::GhReleaseNotes::Generated,
+                notes: flowey_lib_common::publish_gh_release::GhReleaseNotes::Empty,
                 // Publish as a draft. Releasing is new enough that a human
                 // should look at the assembled release before it is public --
                 // and GitHub does not create a draft release's tag until it is
                 // published, so the irreversible step is genuinely last.
                 draft: true,
-                // A failed run is safely rerunnable: replace an existing draft
-                // from this version, but never alter a published release.
-                on_existing: flowey_lib_common::publish_gh_release::OnExistingRelease::ReplaceDraft,
+                // Never modify a draft or published release automatically.
+                // A maintainer must delete an unwanted draft before rerunning.
+                on_existing: flowey_lib_common::publish_gh_release::OnExistingRelease::Fail,
                 prerequisites: vec![attestation_done],
                 done,
             },

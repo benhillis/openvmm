@@ -262,6 +262,10 @@ jobs:
     displayName: 🌼🛫 Initialize job
   - bash: $(FLOWEY_BIN) e 21 flowey_lib_common::install_rust 0
     displayName: install Rust
+  - bash: $(FLOWEY_BIN) e 21 flowey_lib_common::install_dist_pkg 0
+    displayName: checking if packages need to be installed
+  - bash: $(FLOWEY_BIN) e 21 flowey_lib_common::install_dist_pkg 1
+    displayName: installing packages
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 21 flowey_lib_common::git_checkout 0
@@ -290,21 +294,17 @@ jobs:
     displayName: print system info
   - bash: |-
       set -e
-      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build 0
-      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build 1
-      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build 2
+      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 0
+      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 1
+      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 2
     displayName: resolve source release identity
   - bash: |-
       set -e
       $(FLOWEY_BIN) e 21 flowey_lib_hvlite::assemble_openvmm_source_release 0
-      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build 3
-      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build 4
+      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 3
+      $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 4
     displayName: assemble OpenVMM source release
-  - bash: $(FLOWEY_BIN) e 21 flowey_lib_common::install_dist_pkg 0
-    displayName: checking if packages need to be installed
-  - bash: $(FLOWEY_BIN) e 21 flowey_lib_common::install_dist_pkg 1
-    displayName: installing packages
-  - bash: $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build 5
+  - bash: $(FLOWEY_BIN) e 21 flowey_lib_hvlite::_jobs::check_distro_build 0
     displayName: build openvmm in a distribution configuration
 - job: job15
   displayName: clippy [x64-linux-musl, misc nostd], unit tests [x64-linux-musl]

@@ -11,6 +11,8 @@ flowey_request! {
 
 #[derive(Serialize, Deserialize)]
 pub enum GhReleaseNotes {
+    /// Create the release noninteractively with an empty body.
+    Empty,
     Generated,
     Text(String),
 }
@@ -26,16 +28,9 @@ pub enum OnExistingRelease {
     Skip,
     /// Fail.
     ///
-    /// Suits a release triggered by pushing a tag, where an existing release
-    /// means a previous attempt already got this far. Assets are never
-    /// replaced automatically, because the existing release may be one that
-    /// has already been reviewed or published.
+    /// Assets are never replaced automatically, because the existing release
+    /// may already have been reviewed or published.
     Fail,
-    /// Delete and recreate an existing draft, but refuse a published release.
-    ///
-    /// This makes a fallible release pipeline safely rerunnable while
-    /// preserving the immutability of anything already made public.
-    ReplaceDraft,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -150,7 +145,7 @@ impl FlowNode for Node {
                     let target = rt.read(target);
                     let tag = rt.read(tag);
 
-                    // check if the release already exists
+                    // Check if the release already exists.
                     //
                     // xshell doesn't give us the exit code, so we have to
                     // use the raw process API instead.
@@ -168,16 +163,11 @@ impl FlowNode for Node {
                         .arg(&tag)
                         .arg("--repo")
                         .arg(&repo)
-                        .args(["--json", "isDraft", "--jq", ".isDraft"])
                         .output()
                         .context("failed to spawn gh cli")?;
 
-                    // Success means the release already exists. Query draft
-                    // state in the same command so a rerun may replace a draft
-                    // without ever modifying a published release.
+                    // Success means the release already exists.
                     if output.status.success() {
-                        let is_draft =
-                            String::from_utf8_lossy(&output.stdout).trim() == "true";
                         match on_existing {
                             OnExistingRelease::Skip => {
                                 log::info!("GitHub release with tag {tag} already exists in repo {repo}. Skipping...");
@@ -189,19 +179,6 @@ impl FlowNode for Node {
                                      {repo}. Its assets are not replaced automatically, since \
                                      the existing release may already have been reviewed or \
                                      published. Delete it and rerun if it should be regenerated."
-                                );
-                            }
-                            OnExistingRelease::ReplaceDraft if is_draft => {
-                                flowey::shell_cmd!(
-                                    rt,
-                                    "{gh_cli} release delete {tag} --repo {repo} --yes"
-                                )
-                                .run()?;
-                            }
-                            OnExistingRelease::ReplaceDraft => {
-                                anyhow::bail!(
-                                    "GitHub release {tag} in {repo} is already published; \
-                                     published releases and their assets are immutable"
                                 );
                             }
                         }
@@ -235,6 +212,9 @@ impl FlowNode for Node {
                         .collect::<Vec<_>>();
 
                     let notes = match notes {
+                        GhReleaseNotes::Empty => {
+                            vec!["--notes".to_owned(), String::new()]
+                        }
                         GhReleaseNotes::Generated => vec!["--generate-notes".to_owned()],
                         GhReleaseNotes::Text(notes) => vec!["--notes".to_owned(), notes],
                     };

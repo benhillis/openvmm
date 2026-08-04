@@ -6930,6 +6930,12 @@ jobs:
     - name: install Rust
       run: flowey e 31 flowey_lib_common::install_rust 1
       shell: bash
+    - name: checking if packages need to be installed
+      run: flowey e 31 flowey_lib_common::install_dist_pkg 0
+      shell: bash
+    - name: installing packages
+      run: flowey e 31 flowey_lib_common::install_dist_pkg 1
+      shell: bash
     - name: check if openvmm needs to be cloned
       run: |-
         flowey e 31 flowey_lib_common::git_checkout 0
@@ -6958,24 +6964,18 @@ jobs:
       shell: bash
     - name: resolve source release identity
       run: |-
-        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build 0
-        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build 1
-        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build 2
+        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 0
+        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 1
+        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 2
       shell: bash
     - name: assemble OpenVMM source release
       run: |-
         flowey e 31 flowey_lib_hvlite::assemble_openvmm_source_release 0
-        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build 3
-        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build 4
-      shell: bash
-    - name: checking if packages need to be installed
-      run: flowey e 31 flowey_lib_common::install_dist_pkg 0
-      shell: bash
-    - name: installing packages
-      run: flowey e 31 flowey_lib_common::install_dist_pkg 1
+        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 3
+        flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build_from_checkout 4
       shell: bash
     - name: build openvmm in a distribution configuration
-      run: flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build 5
+      run: flowey e 31 flowey_lib_hvlite::_jobs::check_distro_build 0
       shell: bash
   job32:
     name: openvmm checkin gates
