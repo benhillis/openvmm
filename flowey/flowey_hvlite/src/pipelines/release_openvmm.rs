@@ -10,8 +10,8 @@
 //!
 //! Releasing is deliberately manual. A reviewed pull request advances the
 //! workspace version, but merging it publishes nothing. A maintainer dispatches
-//! this workflow from the branch or tag whose current commit should be released.
-//! GitHub uses that commit for the whole run even if the selected branch moves.
+//! this workflow from `main`, and GitHub uses that commit for the whole run even
+//! if the branch moves.
 //!
 //! The fallible work comes first and the irreversible work comes last. The
 //! distribution build runs against the archive that is about to ship, and only
@@ -123,6 +123,7 @@ fn openvmm_release_pipeline(backend_hint: PipelineBackendHint) -> anyhow::Result
             (GhPermission::Contents, GhPermissionValue::Read),
             (GhPermission::IdToken, GhPermissionValue::Write),
             (GhPermission::Attestations, GhPermissionValue::Write),
+            (GhPermission::ArtifactMetadata, GhPermissionValue::Write),
         ])
         .dep_on(
             |ctx| flowey_lib_hvlite::_jobs::publish_openvmm_gh_release::Request {

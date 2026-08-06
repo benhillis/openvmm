@@ -198,6 +198,7 @@ jobs:
     name: publish OpenVMM release
     runs-on: ubuntu-latest
     permissions:
+      artifact-metadata: write
       attestations: write
       contents: write
       id-token: write

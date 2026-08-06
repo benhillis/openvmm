@@ -33,6 +33,21 @@ fn git_path(repo: &Path, name: &str) -> Option<PathBuf> {
     })
 }
 
+fn watch_path(path: &Path) {
+    println!("cargo:rerun-if-changed={}", path.display());
+}
+
+fn watch_path_or_existing_parent(path: &Path) {
+    let mut path = path;
+    while !path.exists() {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        path = parent;
+    }
+    watch_path(path);
+}
+
 fn collect_git_source(repo: &Path) -> Option<version::GitSource> {
     // Git searches parent directories. Reject one so an extracted archive
     // nested in an unrelated checkout cannot inherit that repository's HEAD.
@@ -54,15 +69,21 @@ fn collect_git_source(repo: &Path) -> Option<version::GitSource> {
 }
 
 fn watch_git_identity(repo: &Path) {
-    for name in ["HEAD", "packed-refs"] {
-        if let Some(path) = git_path(repo, name) {
-            println!("cargo:rerun-if-changed={}", path.display());
-        }
+    if let Some(path) = git_path(repo, "HEAD") {
+        watch_path(&path);
+    }
+    if let Some(path) = git_path(repo, "packed-refs")
+        && path.exists()
+    {
+        watch_path(&path);
     }
     if let Some(head_ref) = git(repo, &["symbolic-ref", "HEAD"])
         && let Some(path) = git_path(repo, &head_ref)
     {
-        println!("cargo:rerun-if-changed={}", path.display());
+        // A cloned branch may initially exist only in packed-refs. Watch its
+        // nearest existing parent until the first local commit creates the
+        // loose ref, then Cargo will rerun this script and watch the ref itself.
+        watch_path_or_existing_parent(&path);
     }
 }
 

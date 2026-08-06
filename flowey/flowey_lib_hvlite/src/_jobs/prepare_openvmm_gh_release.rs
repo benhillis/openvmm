@@ -68,12 +68,12 @@ impl SimpleFlowNode for Node {
                     )
                     .run()?;
                 }
-                let reachable = std::process::Command::new("git")
-                    .args(["merge-base", "--is-ancestor", "HEAD", "origin/main"])
-                    .current_dir(&path)
-                    .status()
-                    .context("failed to check whether the release commit is on main")?;
-                if !reachable.success() {
+                let reachable =
+                    flowey::shell_cmd!(rt, "git merge-base --is-ancestor HEAD origin/main")
+                        .ignore_status()
+                        .output()
+                        .context("failed to check whether the release commit is on main")?;
+                if !reachable.status.success() {
                     anyhow::bail!(
                         "{} is not reachable from origin/main; OpenVMM releases must come from \
                          mainline history",
