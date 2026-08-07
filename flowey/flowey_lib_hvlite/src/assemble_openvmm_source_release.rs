@@ -94,8 +94,12 @@ impl SourceIdentity {
 /// Resolve the identity of the OpenVMM checkout in the current working
 /// directory.
 pub fn resolve_identity(rt: &mut RustRuntimeServices<'_>) -> anyhow::Result<SourceIdentity> {
-    let revision = flowey::shell_cmd!(rt, "git rev-parse HEAD").read()?;
-    let version = workspace_version(&std::env::current_dir()?.join("Cargo.toml"))?;
+    let revision = flowey::shell_cmd!(rt, "git rev-parse HEAD")
+        .read()?
+        .trim()
+        .to_owned();
+    let manifest_path = rt.sh.current_dir().absolute()?.join("Cargo.toml");
+    let version = workspace_version(&manifest_path)?;
 
     Ok(SourceIdentity { version, revision })
 }
