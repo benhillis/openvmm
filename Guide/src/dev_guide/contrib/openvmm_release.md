@@ -55,13 +55,17 @@ metadata identifies a development build made from a checkout.
 
 | Source shape | Example `openvmm -V` | Build kind |
 | --- | --- | --- |
-| Ordinary checkout | `openvmm 0.2.0+g012345678` | development |
-| Checkout of `openvmm-v0.2.0` | `openvmm 0.2.0+g012345678` | development |
+| Clean checkout | `openvmm 0.2.0+g012345678` | development |
+| Checkout with tracked changes | `openvmm 0.2.0+g012345678.dirty` | development |
+| Clean checkout of `openvmm-v0.2.0` | `openvmm 0.2.0+g012345678` | development |
 | Extracted published archive | `openvmm 0.2.0` | release |
 
 Every Git checkout reports development identity, including an exact checkout
 of a release tag. Release tags are publication markers and are not inspected
 when deriving build identity.
+
+A checkout with staged or unstaged changes to tracked files appends `.dirty`.
+Untracked files do not affect the identity, matching `git describe --dirty`.
 
 An extracted archive has no Git history, so Cargo reads the version already
 committed in `Cargo.toml`. Nothing stamps or rewrites the archive during
@@ -69,6 +73,9 @@ release assembly.
 
 `openvmm --version` prints the detailed form with the product version, build
 kind, full revision when available, and build target.
+
+On Windows, the executable's `VERSIONINFO` uses the product version as
+`MAJOR.MINOR.PATCH.0`.
 
 ## Distribution-build gate
 
