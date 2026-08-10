@@ -1,16 +1,21 @@
-# Release Management
+# OpenHCL Release Management
 
-Occasionally, the OpenVMM project will declare upcoming release milestones. We
-stabilize the code base in a `release/<MAJOR>.<MINOR>.<YYMM>` branch, typically
-named for the YYMM when the branch was forked. Future references to the release
-number will be shortened to `<RELEASE>` in this doc. We expect a high quality
-bar for all code that goes into the OpenVMM main branch, and we ask developers
-to hold these release branches to the highest quality standards. The OpenVMM
-maintainers will gradually slow the rate of churn into these branches as we get
-closer to a close date.
+This page describes the OpenHCL release-branch and backport process.
 
-> **Note:** Some older release branches use the format `release/<YYMM>` without
-> the major and minor version numbers (e.g., `release/2411`, `release/2505`).
+Occasionally, the OpenVMM project will declare upcoming OpenHCL release
+milestones. We stabilize the code base in a
+`release/<MAJOR>.<MINOR>.<YYMM>` branch, typically named for the YYMM when the
+branch was forked. Future references to the release number will be shortened to
+`<RELEASE>` in this doc. We expect a high quality bar for all code that goes
+into the OpenVMM main branch, and we ask developers to hold these release
+branches to the highest quality standards. The OpenVMM maintainers will
+gradually slow the rate of churn into these branches as we get closer to a
+close date.
+
+```admonish note
+Some older release branches use the format `release/<YYMM>` without the major
+and minor version numbers, such as `release/2411` and `release/2505`.
+```
 
 This process should not impact your typical workflow; all new work should go
 into the `main` branch. But, to ease the cherry-picks, we may ask that you hold
@@ -36,13 +41,18 @@ Releases naturally fall into several phases:
 
 ### Release branch process
 
-We track the state of candidates for a given release by tagging the PRs with the following labels:
+We track the state of candidates for a given release by tagging the PRs with
+the following labels:
 
 * `backport_<RELEASE>`: This PR (to `main`) is a candidate to be included in the release.
   * N.B.: A maintainer will _remove_ this tag if the fix is not accepted into the release.
 * `backported_<RELEASE>`: This PR (to `main`) has been cherry-picked to the release branch.
 
-The [`repo_support/relabel_backported.py`](https://github.com/microsoft/openvmm/blob/main/repo_support/relabel_backported.py) script can be used to automatically transition PRs from `backport_<RELEASE>` to `backported_<RELEASE>` once they have been cherry-picked to the release branch.
+The
+[`repo_support/relabel_backported.py`](https://github.com/microsoft/openvmm/blob/main/repo_support/relabel_backported.py)
+script can automatically transition PRs from `backport_<RELEASE>` to
+`backported_<RELEASE>` after they have been cherry-picked to the release
+branch.
 
 #### Seeking Approval for Backport
 

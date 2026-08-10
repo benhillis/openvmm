@@ -2338,6 +2338,7 @@ dependencies = [
  "serde_json",
  "target-lexicon",
  "tempfile",
+ "toml_edit",
  "vmm_test_images",
  "which 8.0.0",
 ]
@@ -5625,13 +5626,20 @@ dependencies = [
 
 [[package]]
 name = "openvmm"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "crypto",
  "embed-resource",
  "openvmm_entry",
  "openvmm_hypervisors",
  "openvmm_resources",
+]
+
+[[package]]
+name = "openvmm_build_info"
+version = "0.1.0"
+dependencies = [
+ "test_with_tracing",
 ]
 
 [[package]]
@@ -5801,6 +5809,7 @@ dependencies = [
  "net_tap",
  "netvsp_resources",
  "nvme_resources",
+ "openvmm_build_info",
  "openvmm_defs",
  "openvmm_helpers",
  "openvmm_pcat_locator",
